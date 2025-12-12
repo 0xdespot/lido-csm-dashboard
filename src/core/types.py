@@ -1,8 +1,12 @@
 """Data models for CSM Dashboard."""
 
 from decimal import Decimal
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from ..data.beacon import ValidatorInfo
 
 
 class NodeOperator(BaseModel):
@@ -43,8 +47,30 @@ class RewardsInfo(BaseModel):
     proof: list[str]
 
 
+class APYMetrics(BaseModel):
+    """APY calculations for an operator.
+
+    Note: Validator APY (consensus rewards) is NOT included because CSM operators
+    don't receive those rewards directly - they go to Lido protocol and are
+    redistributed via CSM reward distributions (captured in reward_apy).
+    """
+
+    # Reward APY (CSM distributions) - this is the main earnings metric
+    reward_apy_7d: float | None = None
+    reward_apy_28d: float | None = None
+
+    # Bond APY (stETH rebase appreciation)
+    bond_apy: float | None = None
+
+    # Net APY (Reward APY + Bond APY)
+    net_apy_7d: float | None = None
+    net_apy_28d: float | None = None
+
+
 class OperatorRewards(BaseModel):
     """Complete rewards summary for display."""
+
+    model_config = {"arbitrary_types_allowed": True}
 
     node_operator_id: int
     manager_address: str
@@ -64,7 +90,15 @@ class OperatorRewards(BaseModel):
     # Total claimable
     total_claimable_eth: Decimal
 
-    # Validator counts
+    # Validator counts (from on-chain)
     total_validators: int
     active_validators: int
     exited_validators: int
+
+    # Validator details (from beacon chain, optional)
+    validator_details: list[Any] = []  # list[ValidatorInfo]
+    validators_by_status: dict[str, int] | None = None
+    avg_effectiveness: float | None = None
+
+    # APY metrics (optional, requires detailed lookup)
+    apy: APYMetrics | None = None

@@ -25,9 +25,9 @@ def run_async(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 
 
-def format_as_api_json(rewards: OperatorRewards) -> dict:
+def format_as_api_json(rewards: OperatorRewards, include_validators: bool = False) -> dict:
     """Format rewards data in the same structure as the API endpoint."""
-    return {
+    result = {
         "operator_id": rewards.node_operator_id,
         "manager_address": rewards.manager_address,
         "reward_address": rewards.reward_address,
@@ -48,6 +48,30 @@ def format_as_api_json(rewards: OperatorRewards) -> dict:
         },
     }
 
+    # Add beacon chain validator details if available
+    if rewards.validators_by_status:
+        result["validators"]["by_status"] = rewards.validators_by_status
+
+    if rewards.avg_effectiveness is not None:
+        result["performance"] = {
+            "avg_effectiveness": round(rewards.avg_effectiveness, 2),
+        }
+
+    if include_validators and rewards.validator_details:
+        result["validator_details"] = [v.to_dict() for v in rewards.validator_details]
+
+    # Add APY metrics if available
+    if rewards.apy:
+        result["apy"] = {
+            "reward_apy_7d": rewards.apy.reward_apy_7d,
+            "reward_apy_28d": rewards.apy.reward_apy_28d,
+            "bond_apy": rewards.apy.bond_apy,
+            "net_apy_7d": rewards.apy.net_apy_7d,
+            "net_apy_28d": rewards.apy.net_apy_28d,
+        }
+
+    return result
+
 
 @app.command()
 def check(
@@ -63,6 +87,9 @@ def check(
     output_json: bool = typer.Option(
         False, "--json", "-j", help="Output as JSON (same format as API)"
     ),
+    detailed: bool = typer.Option(
+        False, "--detailed", "-d", help="Include validator status from beacon chain"
+    ),
 ):
     """
     Check CSM operator rewards and earnings.
@@ -71,23 +98,27 @@ def check(
         csm check 0xYourAddress
         csm check 0xYourAddress --id 42
         csm check 0xYourAddress --json
+        csm check 0xYourAddress --detailed
     """
     service = OperatorService(rpc_url)
 
     if not output_json:
         console.print()
-        with console.status("[bold blue]Fetching operator data..."):
+        status_msg = "[bold blue]Fetching operator data..."
+        if detailed:
+            status_msg = "[bold blue]Fetching operator data and validator status..."
+        with console.status(status_msg):
             if operator_id is not None:
-                rewards = run_async(service.get_operator_by_id(operator_id))
+                rewards = run_async(service.get_operator_by_id(operator_id, detailed))
             else:
                 console.print(f"[dim]Looking up operator for address: {address}[/dim]")
-                rewards = run_async(service.get_operator_by_address(address))
+                rewards = run_async(service.get_operator_by_address(address, detailed))
     else:
         # JSON mode - no status output
         if operator_id is not None:
-            rewards = run_async(service.get_operator_by_id(operator_id))
+            rewards = run_async(service.get_operator_by_id(operator_id, detailed))
         else:
-            rewards = run_async(service.get_operator_by_address(address))
+            rewards = run_async(service.get_operator_by_address(address, detailed))
 
     if rewards is None:
         if output_json:
@@ -98,7 +129,7 @@ def check(
 
     # JSON output mode
     if output_json:
-        print(json.dumps(format_as_api_json(rewards), indent=2))
+        print(json.dumps(format_as_api_json(rewards, detailed), indent=2))
         return
 
     # Header panel
@@ -162,6 +193,70 @@ def check(
 
     console.print(rewards_table)
     console.print()
+
+    # Validator status breakdown (from beacon chain)
+    if detailed and rewards.validators_by_status:
+        status_table = Table(title="Validator Status (Beacon Chain)")
+        status_table.add_column("Status", style="cyan")
+        status_table.add_column("Count", style="green", justify="right")
+
+        status_order = ["active", "pending", "exiting", "exited", "slashed", "unknown"]
+        status_styles = {
+            "active": "green",
+            "pending": "yellow",
+            "exiting": "yellow",
+            "exited": "dim",
+            "slashed": "red bold",
+            "unknown": "dim",
+        }
+
+        for status in status_order:
+            count = rewards.validators_by_status.get(status, 0)
+            if count > 0:
+                style = status_styles.get(status, "white")
+                status_table.add_row(
+                    status.capitalize(),
+                    f"[{style}]{count}[/{style}]",
+                )
+
+        console.print(status_table)
+
+        if rewards.avg_effectiveness is not None:
+            console.print(
+                f"\n[cyan]Average Attestation Effectiveness:[/cyan] "
+                f"[bold green]{rewards.avg_effectiveness:.1f}%[/bold green]"
+            )
+        console.print()
+
+    # APY Metrics table (only shown with --detailed flag)
+    if detailed and rewards.apy:
+        apy_table = Table(title="APY Metrics")
+        apy_table.add_column("Metric", style="cyan")
+        apy_table.add_column("7-Day", style="green", justify="right")
+        apy_table.add_column("28-Day", style="green", justify="right")
+
+        def fmt_apy(val: float | None) -> str:
+            return f"{val:.2f}%" if val is not None else "--"
+
+        apy_table.add_row(
+            "Reward APY",
+            fmt_apy(rewards.apy.reward_apy_7d),
+            fmt_apy(rewards.apy.reward_apy_28d),
+        )
+        apy_table.add_row(
+            "Bond APY (stETH)",
+            fmt_apy(rewards.apy.bond_apy),
+            fmt_apy(rewards.apy.bond_apy),
+        )
+        apy_table.add_row("", "", "")
+        apy_table.add_row(
+            "[bold]NET APY[/bold]",
+            f"[bold yellow]{fmt_apy(rewards.apy.net_apy_7d)}[/bold yellow]",
+            f"[bold yellow]{fmt_apy(rewards.apy.net_apy_28d)}[/bold yellow]",
+        )
+
+        console.print(apy_table)
+        console.print()
 
 
 @app.command()

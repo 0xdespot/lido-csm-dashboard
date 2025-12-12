@@ -156,13 +156,21 @@ class OnChainDataProvider:
     async def get_signing_keys(
         self, operator_id: int, start: int = 0, count: int = 100
     ) -> list[str]:
-        """Get validator pubkeys for an operator."""
-        keys_bytes = self.csmodule.functions.getSigningKeys(
-            operator_id, start, count
-        ).call()
-        # Each key is 48 bytes
+        """Get validator pubkeys for an operator.
+
+        Fetches in batches of 100 to avoid RPC limits on large operators.
+        """
         keys = []
-        for i in range(0, len(keys_bytes), 48):
-            key = "0x" + keys_bytes[i : i + 48].hex()
-            keys.append(key)
+        batch_size = 100
+
+        for batch_start in range(start, start + count, batch_size):
+            batch_count = min(batch_size, start + count - batch_start)
+            keys_bytes = self.csmodule.functions.getSigningKeys(
+                operator_id, batch_start, batch_count
+            ).call()
+            # Each key is 48 bytes
+            for i in range(0, len(keys_bytes), 48):
+                key = "0x" + keys_bytes[i : i + 48].hex()
+                keys.append(key)
+
         return keys

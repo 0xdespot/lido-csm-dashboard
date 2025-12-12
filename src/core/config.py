@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # Beacon Chain API (optional)
     beacon_api_url: str = "https://beaconcha.in/api/v1"
+    beacon_api_key: str | None = None  # Optional beaconcha.in API key for higher rate limits
 
     # Data Sources
     rewards_proofs_url: str = (

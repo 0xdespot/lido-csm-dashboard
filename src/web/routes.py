@@ -1,6 +1,6 @@
 """API endpoints for the web interface."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from ..services.operator_service import OperatorService
 
@@ -8,28 +8,32 @@ router = APIRouter()
 
 
 @router.get("/operator/{identifier}")
-async def get_operator(identifier: str):
+async def get_operator(
+    identifier: str,
+    detailed: bool = Query(False, description="Include validator status from beacon chain"),
+):
     """
     Get operator data by address or ID.
 
     - If identifier is numeric, treat as operator ID
     - If identifier starts with 0x, treat as Ethereum address
+    - Add ?detailed=true to include validator status breakdown
     """
     service = OperatorService()
 
     # Determine if this is an ID or address
     if identifier.isdigit():
         operator_id = int(identifier)
-        rewards = await service.get_operator_by_id(operator_id)
+        rewards = await service.get_operator_by_id(operator_id, detailed)
     elif identifier.startswith("0x"):
-        rewards = await service.get_operator_by_address(identifier)
+        rewards = await service.get_operator_by_address(identifier, detailed)
     else:
         raise HTTPException(status_code=400, detail="Invalid identifier format")
 
     if rewards is None:
         raise HTTPException(status_code=404, detail="Operator not found")
 
-    return {
+    result = {
         "operator_id": rewards.node_operator_id,
         "manager_address": rewards.manager_address,
         "reward_address": rewards.reward_address,
@@ -49,6 +53,30 @@ async def get_operator(identifier: str):
             "exited": rewards.exited_validators,
         },
     }
+
+    # Add beacon chain validator details if available
+    if rewards.validators_by_status:
+        result["validators"]["by_status"] = rewards.validators_by_status
+
+    if rewards.avg_effectiveness is not None:
+        result["performance"] = {
+            "avg_effectiveness": round(rewards.avg_effectiveness, 2),
+        }
+
+    if detailed and rewards.validator_details:
+        result["validator_details"] = [v.to_dict() for v in rewards.validator_details]
+
+    # Add APY metrics if available
+    if rewards.apy:
+        result["apy"] = {
+            "reward_apy_7d": rewards.apy.reward_apy_7d,
+            "reward_apy_28d": rewards.apy.reward_apy_28d,
+            "bond_apy": rewards.apy.bond_apy,
+            "net_apy_7d": rewards.apy.net_apy_7d,
+            "net_apy_28d": rewards.apy.net_apy_28d,
+        }
+
+    return result
 
 
 @router.get("/operators")

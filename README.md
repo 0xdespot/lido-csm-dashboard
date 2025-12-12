@@ -15,7 +15,7 @@ Track your Lido Community Staking Module (CSM) validator earnings, excess bond, 
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd lido-csm-bank
+cd lido-csm-dashboard
 
 # Install with pip
 pip install -e .
