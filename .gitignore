@@ -29,3 +29,5 @@ Thumbs.db # Windows
 dist/
 build/
 *.egg-info/
+
+DESIGN.md

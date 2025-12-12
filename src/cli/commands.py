@@ -75,8 +75,8 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
 
 @app.command()
 def check(
-    address: str = typer.Argument(
-        ..., help="Ethereum address (manager or rewards address)"
+    address: Optional[str] = typer.Argument(
+        None, help="Ethereum address (required unless --id is provided)"
     ),
     operator_id: Optional[int] = typer.Option(
         None, "--id", "-i", help="Operator ID (skip address lookup)"
@@ -96,10 +96,14 @@ def check(
 
     Examples:
         csm check 0xYourAddress
-        csm check 0xYourAddress --id 42
+        csm check --id 42
         csm check 0xYourAddress --json
-        csm check 0xYourAddress --detailed
+        csm check --id 42 --detailed
     """
+    if address is None and operator_id is None:
+        console.print("[red]Error: Must provide either ADDRESS or --id[/red]")
+        raise typer.Exit(1)
+
     service = OperatorService(rpc_url)
 
     if not output_json:
