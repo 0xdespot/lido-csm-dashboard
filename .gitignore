@@ -31,3 +31,4 @@ build/
 *.egg-info/
 
 DESIGN.md
+.DS_Store

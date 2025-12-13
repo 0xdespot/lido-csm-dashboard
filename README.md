@@ -2,11 +2,18 @@
 
 Track your Lido Community Staking Module (CSM) validator earnings, excess bond, and cumulative rewards.
 
+![CLI Output](img/csm-dash-cli.png)
+
+![Web Dashboard](img/csm-dash-web.png)
+
 ## Features
 
-- Look up operator by Ethereum address (manager or rewards address)
+- Look up operator by Ethereum address (manager or rewards address) or operator ID
 - View current bond vs required bond (excess is claimable)
 - Track cumulative rewards and unclaimed amounts
+- Detailed validator status from beacon chain (with `--detailed` flag)
+- APY metrics: reward APY, bond APY (stETH rebase), and net APY
+- JSON output for scripting and automation
 - CLI for quick terminal lookups
 - Web interface for browser-based monitoring
 
@@ -34,51 +41,182 @@ cp .env.example .env
 
 Available settings:
 - `ETH_RPC_URL`: Ethereum RPC endpoint (default: https://eth.llamarpc.com)
+- `BEACON_API_URL`: Beacon chain API (default: https://beaconcha.in/api/v1)
+- `BEACON_API_KEY`: Optional API key for beaconcha.in (higher rate limits)
 - `CACHE_TTL_SECONDS`: Cache duration in seconds (default: 300)
 
 ## Usage
 
-### CLI Commands
+### `csm check` - Check operator rewards
 
 ```bash
-# Check rewards by address
-csm check 0xYourAddress
-
-# Check by operator ID (faster, skips address lookup)
-csm check 0xYourAddress --id 42
-
-# Use custom RPC
-csm check 0xYourAddress --rpc https://eth.llamarpc.com
-
-# Continuous monitoring (refreshes every 5 minutes by default)
-csm watch 0xYourAddress --interval 60
-
-# List all operators with rewards
-csm list
+csm check [ADDRESS] [OPTIONS]
 ```
 
-### Web Interface
+| Argument/Option | Short | Description |
+|-----------------|-------|-------------|
+| `ADDRESS` | | Ethereum address (required unless `--id` is provided) |
+| `--id` | `-i` | Operator ID (skips address lookup, faster) |
+| `--detailed` | `-d` | Include validator status from beacon chain and APY metrics |
+| `--json` | `-j` | Output as JSON (same format as API) |
+| `--rpc` | `-r` | Custom RPC URL |
+
+**Examples:**
 
 ```bash
-# Start the web server
-csm serve --port 8080
+# Check by address
+csm check 0xYourAddress
 
-# With auto-reload for development
+# Check by operator ID (faster)
+csm check --id 42
+
+# Get detailed validator info and APY
+csm check --id 42 --detailed
+
+# JSON output for scripting
+csm check --id 42 --json
+
+# JSON with detailed info
+csm check --id 42 --detailed --json
+```
+
+### `csm watch` - Continuous monitoring
+
+```bash
+csm watch ADDRESS [OPTIONS]
+```
+
+| Argument/Option | Short | Description |
+|-----------------|-------|-------------|
+| `ADDRESS` | | Ethereum address to monitor (required) |
+| `--interval` | `-i` | Refresh interval in seconds (default: 300) |
+| `--rpc` | `-r` | Custom RPC URL |
+
+**Examples:**
+
+```bash
+# Monitor with default 5-minute refresh
+csm watch 0xYourAddress
+
+# Monitor with 60-second refresh
+csm watch 0xYourAddress --interval 60
+```
+
+### `csm list` - List all operators
+
+```bash
+csm list [OPTIONS]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--rpc` | `-r` | Custom RPC URL |
+
+Lists all operator IDs that have rewards in the current merkle tree.
+
+### `csm serve` - Start web dashboard
+
+```bash
+csm serve [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--host` | Host to bind to (default: 127.0.0.1) |
+| `--port` | Port to bind to (default: 8080) |
+| `--reload` | Enable auto-reload for development |
+
+**Examples:**
+
+```bash
+# Start on default port
+csm serve
+
+# Start on custom port
+csm serve --port 3000
+
+# Development mode with auto-reload
 csm serve --reload
 ```
 
 Then open http://localhost:8080 in your browser.
 
-### API Endpoints
+## JSON Output
+
+The `--json` flag outputs data in the same format as the API, making it easy to integrate with scripts or other tools:
+
+```bash
+csm check --id 333 --json
+```
+
+```json
+{
+  "operator_id": 333,
+  "manager_address": "0x6ac683C503CF210CCF88193ec7ebDe2c993f63a4",
+  "reward_address": "0x55915Cf2115c4D6e9085e94c8dAD710cabefef31",
+  "rewards": {
+    "current_bond_eth": 651.5077659633782,
+    "required_bond_eth": 650.2,
+    "excess_bond_eth": 1.3077659633781948,
+    "cumulative_rewards_shares": 8973877501313655495,
+    "distributed_shares": 7867435720490255061,
+    "unclaimed_shares": 1106441780823400434,
+    "unclaimed_eth": 1.3517593340456497,
+    "total_claimable_eth": 2.6595252974238446
+  },
+  "validators": {
+    "total": 500,
+    "active": 500,
+    "exited": 0
+  }
+}
+```
+
+With `--detailed`, additional fields are included:
+
+```json
+{
+  "operator_id": 333,
+  "...": "...",
+  "validators": {
+    "total": 500,
+    "active": 500,
+    "exited": 0,
+    "by_status": {
+      "active": 100,
+      "pending": 0,
+      "exiting": 0,
+      "exited": 0,
+      "slashed": 0,
+      "unknown": 0
+    }
+  },
+  "performance": {
+    "avg_effectiveness": 98.5
+  },
+  "apy": {
+    "reward_apy_7d": 4.2,
+    "reward_apy_28d": 4.2,
+    "bond_apy": 3.1,
+    "net_apy_7d": 7.3,
+    "net_apy_28d": 7.3
+  }
+}
+```
+
+## API Endpoints
 
 - `GET /api/operator/{address_or_id}` - Get operator rewards data
+  - Query param: `?detailed=true` for validator status and APY
 - `GET /api/operators` - List all operators with rewards
 - `GET /api/health` - Health check
 
 ## Data Sources
 
-- **On-chain contracts**: CSModule, CSAccounting, CSFeeDistributor
+- **On-chain contracts**: CSModule, CSAccounting, CSFeeDistributor, stETH
 - **Rewards tree**: https://github.com/lidofinance/csm-rewards (updates hourly)
+- **Beacon chain**: beaconcha.in API (for validator status)
+- **Lido API**: stETH APR data (for bond APY calculations)
 
 ## Contract Addresses (Mainnet)
 
