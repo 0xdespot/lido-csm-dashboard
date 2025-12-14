@@ -1,5 +1,6 @@
 """Beacon chain data fetching via beaconcha.in API."""
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 
@@ -7,6 +8,23 @@ import httpx
 
 from ..core.config import get_settings
 from .cache import cached
+
+# Beacon Chain constants
+BEACON_GENESIS = datetime(2020, 12, 1, 12, 0, 23, tzinfo=timezone.utc)
+SECONDS_PER_EPOCH = 32 * 12  # 384 seconds (32 slots × 12 seconds per slot)
+
+
+def epoch_to_datetime(epoch: int) -> datetime:
+    """Convert beacon chain epoch to datetime."""
+    return BEACON_GENESIS + timedelta(seconds=epoch * SECONDS_PER_EPOCH)
+
+
+def get_earliest_activation(validators: list["ValidatorInfo"]) -> datetime | None:
+    """Get the earliest activation date from a list of validators."""
+    epochs = [v.activation_epoch for v in validators if v.activation_epoch is not None]
+    if not epochs:
+        return None
+    return epoch_to_datetime(min(epochs))
 
 
 class ValidatorStatus(str, Enum):

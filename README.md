@@ -43,6 +43,7 @@ Available settings:
 - `ETH_RPC_URL`: Ethereum RPC endpoint (default: https://eth.llamarpc.com)
 - `BEACON_API_URL`: Beacon chain API (default: https://beaconcha.in/api/v1)
 - `BEACON_API_KEY`: Optional API key for beaconcha.in (higher rate limits)
+- `ETHERSCAN_API_KEY`: Optional API key for Etherscan (recommended for accurate historical data)
 - `CACHE_TTL_SECONDS`: Cache duration in seconds (default: 300)
 
 ## Usage
@@ -197,12 +198,13 @@ With `--detailed`, additional fields are included:
     "avg_effectiveness": 98.5
   },
   "apy": {
-    "reward_apy_7d": 4.2,
-    "reward_apy_28d": 4.2,
-    "bond_apy": 3.1,
-    "net_apy_7d": 7.3,
-    "net_apy_28d": 7.3
-  }
+    "historical_reward_apy_28d": 2.21,
+    "historical_reward_apy_ltd": 2.03,
+    "bond_apy": 2.54,
+    "net_apy_28d": 4.75,
+    "net_apy_ltd": 4.57
+  },
+  "active_since": "2025-02-16T12:00:00"
 }
 ```
 
@@ -213,12 +215,51 @@ With `--detailed`, additional fields are included:
 - `GET /api/operators` - List all operators with rewards
 - `GET /api/health` - Health check
 
+## Understanding APY Metrics
+
+The dashboard shows three APY metrics when using the `--detailed` flag:
+
+| Metric | What It Means |
+|--------|---------------|
+| **Reward APY** | Your earnings from CSM fee distributions, based on your validators' performance |
+| **Bond APY** | Automatic growth of your stETH bond from protocol rebasing (same for all operators) |
+| **NET APY** | Total return = Reward APY + Bond APY |
+
+### How APY is Calculated
+
+**Reward APY** is calculated from actual on-chain reward distributions stored on IPFS. The dashboard fetches all historical distribution frames since CSM launched (December 2024) to calculate both 28-day and lifetime APY.
+
+- **28-Day APY**: Based on the most recent ~28 days of reward distributions
+- **Lifetime APY**: Based on all periods where you earned rewards (excludes ramp-up periods with no rewards to avoid misleadingly low numbers)
+
+**Bond APY** represents the stETH rebase rate—the automatic growth of your bond due to Ethereum staking rewards. This rate is set by the Lido protocol and applies equally to all operators. The dashboard shows the current 7-day average rate from Lido's API.
+
+> **Note**: Bond APY shows the current stETH rate for both 28-Day and Lifetime columns, as historical rates aren't readily available.
+
+### Why You Might Want an Etherscan API Key
+
+To calculate accurate lifetime APY, the dashboard needs to find all historical reward distributions. This data lives on the Ethereum blockchain, and accessing it can be done in several ways:
+
+| Method | Description |
+|--------|-------------|
+| **With Etherscan API key** | Most reliable. Queries Etherscan directly for complete, up-to-date distribution history. |
+| **Without API key** | Uses a built-in list of known distributions. Works fine but may be slightly behind if new distributions happened recently. |
+
+**How to get one (free):**
+1. Go to [etherscan.io/apis](https://etherscan.io/apis)
+2. Create a free account
+3. Generate an API key
+4. Add to your `.env` file: `ETHERSCAN_API_KEY=your_key_here`
+
+The free tier allows 5 calls/second, which is plenty for this dashboard.
+
 ## Data Sources
 
 - **On-chain contracts**: CSModule, CSAccounting, CSFeeDistributor, stETH
 - **Rewards tree**: https://github.com/lidofinance/csm-rewards (updates hourly)
 - **Beacon chain**: beaconcha.in API (for validator status)
 - **Lido API**: stETH APR data (for bond APY calculations)
+- **IPFS**: Historical reward distribution logs (cached locally after first fetch)
 
 ## Contract Addresses (Mainnet)
 

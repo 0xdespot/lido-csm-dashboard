@@ -1,5 +1,6 @@
 """Data models for CSM Dashboard."""
 
+from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -53,18 +54,26 @@ class APYMetrics(BaseModel):
     Note: Validator APY (consensus rewards) is NOT included because CSM operators
     don't receive those rewards directly - they go to Lido protocol and are
     redistributed via CSM reward distributions (captured in reward_apy).
+
+    Historical APY is calculated from actual distributed rewards in IPFS logs,
+    which is more accurate than calculating from unclaimed amounts.
     """
 
-    # Reward APY (CSM distributions) - this is the main earnings metric
-    reward_apy_7d: float | None = None
-    reward_apy_28d: float | None = None
+    # Historical Reward APY (from IPFS distribution logs) - most accurate
+    historical_reward_apy_28d: float | None = None  # Last ~28 days (1 frame)
+    historical_reward_apy_ltd: float | None = None  # Lifetime
 
     # Bond APY (stETH rebase appreciation)
     bond_apy: float | None = None
 
-    # Net APY (Reward APY + Bond APY)
-    net_apy_7d: float | None = None
+    # Net APY (Historical Reward APY + Bond APY)
     net_apy_28d: float | None = None
+    net_apy_ltd: float | None = None
+
+    # Legacy fields (deprecated, kept for backwards compatibility)
+    reward_apy_7d: float | None = None
+    reward_apy_28d: float | None = None
+    net_apy_7d: float | None = None
 
 
 class OperatorRewards(BaseModel):
@@ -104,3 +113,6 @@ class OperatorRewards(BaseModel):
 
     # APY metrics (optional, requires detailed lookup)
     apy: APYMetrics | None = None
+
+    # Operator activation date (from earliest validator activation)
+    active_since: datetime | None = None

@@ -30,5 +30,8 @@ dist/
 build/
 *.egg-info/
 
+# Cache directories
+.cache/
+
 DESIGN.md
 .DS_Store

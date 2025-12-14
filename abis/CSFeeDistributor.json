@@ -9,6 +9,31 @@
     ]
   },
   {
+    "name": "logCid",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {"name": "", "type": "string"}
+    ]
+  },
+  {
+    "name": "DistributionLogUpdated",
+    "type": "event",
+    "inputs": [
+      {"name": "logCid", "type": "string", "indexed": false}
+    ]
+  },
+  {
+    "name": "DistributionDataUpdated",
+    "type": "event",
+    "inputs": [
+      {"name": "totalClaimableShares", "type": "uint256", "indexed": false},
+      {"name": "treeRoot", "type": "bytes32", "indexed": false},
+      {"name": "treeCid", "type": "string", "indexed": false}
+    ]
+  },
+  {
     "name": "distributedShares",
     "type": "function",
     "stateMutability": "view",

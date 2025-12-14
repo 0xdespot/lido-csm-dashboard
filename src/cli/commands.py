@@ -65,12 +65,16 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
     # Add APY metrics if available
     if rewards.apy:
         result["apy"] = {
-            "reward_apy_7d": rewards.apy.reward_apy_7d,
-            "reward_apy_28d": rewards.apy.reward_apy_28d,
+            "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
+            "historical_reward_apy_ltd": rewards.apy.historical_reward_apy_ltd,
             "bond_apy": rewards.apy.bond_apy,
-            "net_apy_7d": rewards.apy.net_apy_7d,
             "net_apy_28d": rewards.apy.net_apy_28d,
+            "net_apy_ltd": rewards.apy.net_apy_ltd,
         }
+
+    # Add active_since if available
+    if rewards.active_since:
+        result["active_since"] = rewards.active_since.isoformat()
 
     return result
 
@@ -139,9 +143,13 @@ def check(
         return
 
     # Header panel
+    active_since_str = ""
+    if rewards.active_since:
+        active_since_str = f"Active Since: {rewards.active_since.strftime('%b %d, %Y')}"
     console.print(
         Panel(
             f"[bold]CSM Operator #{rewards.node_operator_id}[/bold]\n"
+            f"{active_since_str}\n\n"
             f"Manager: {rewards.manager_address}\n"
             f"Rewards: {rewards.reward_address}",
             title="Operator Info",
@@ -236,32 +244,33 @@ def check(
 
     # APY Metrics table (only shown with --detailed flag)
     if detailed and rewards.apy:
-        apy_table = Table(title="APY Metrics")
+        apy_table = Table(title="APY Metrics (Historical)")
         apy_table.add_column("Metric", style="cyan")
-        apy_table.add_column("7-Day", style="green", justify="right")
         apy_table.add_column("28-Day", style="green", justify="right")
+        apy_table.add_column("Lifetime", style="green", justify="right")
 
         def fmt_apy(val: float | None) -> str:
             return f"{val:.2f}%" if val is not None else "--"
 
         apy_table.add_row(
             "Reward APY",
-            fmt_apy(rewards.apy.reward_apy_7d),
-            fmt_apy(rewards.apy.reward_apy_28d),
+            fmt_apy(rewards.apy.historical_reward_apy_28d),
+            fmt_apy(rewards.apy.historical_reward_apy_ltd),
         )
         apy_table.add_row(
-            "Bond APY (stETH)",
+            "Bond APY (stETH)*",
             fmt_apy(rewards.apy.bond_apy),
             fmt_apy(rewards.apy.bond_apy),
         )
         apy_table.add_row("", "", "")
         apy_table.add_row(
             "[bold]NET APY[/bold]",
-            f"[bold yellow]{fmt_apy(rewards.apy.net_apy_7d)}[/bold yellow]",
             f"[bold yellow]{fmt_apy(rewards.apy.net_apy_28d)}[/bold yellow]",
+            f"[bold yellow]{fmt_apy(rewards.apy.net_apy_ltd)}[/bold yellow]",
         )
 
         console.print(apy_table)
+        console.print("[dim]*Bond APY uses current stETH rate[/dim]")
         console.print()
 
 

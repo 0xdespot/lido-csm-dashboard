@@ -71,6 +71,10 @@ def create_app() -> FastAPI:
                 <div id="lookup-tip" class="hidden mt-3 text-sm text-gray-400 bg-gray-700/50 rounded px-3 py-2">
                     Tip: Use operator ID <span id="tip-operator-id" class="font-bold text-blue-400"></span> directly for faster lookups
                 </div>
+                <div id="active-since-row" class="hidden mt-3">
+                    <span class="text-gray-400">Active Since:</span>
+                    <span id="active-since" class="font-medium text-green-400"></span>
+                </div>
             </div>
 
             <div class="grid grid-cols-3 gap-4 mb-6">
@@ -175,35 +179,36 @@ def create_app() -> FastAPI:
             </div>
 
             <div id="apy-section" class="hidden mt-6 bg-gray-800 rounded-lg p-6">
-                <h3 class="text-lg font-bold mb-4">APY Metrics</h3>
+                <h3 class="text-lg font-bold mb-4">APY Metrics (Historical)</h3>
                 <div class="overflow-x-auto">
                     <table class="w-full">
                         <thead>
                             <tr class="text-gray-400 text-sm">
                                 <th class="text-left py-2">Metric</th>
-                                <th class="text-right py-2">7-Day</th>
                                 <th class="text-right py-2">28-Day</th>
+                                <th class="text-right py-2">Lifetime</th>
                             </tr>
                         </thead>
                         <tbody class="text-sm">
                             <tr>
                                 <td class="py-2 text-gray-400">Reward APY</td>
-                                <td class="py-2 text-right text-green-400" id="reward-apy-7d">--%</td>
                                 <td class="py-2 text-right text-green-400" id="reward-apy-28d">--%</td>
+                                <td class="py-2 text-right text-green-400" id="reward-apy-ltd">--%</td>
                             </tr>
                             <tr>
-                                <td class="py-2 text-gray-400">Bond APY (stETH)</td>
-                                <td class="py-2 text-right text-green-400" id="bond-apy-7d">--%</td>
+                                <td class="py-2 text-gray-400">Bond APY (stETH)*</td>
                                 <td class="py-2 text-right text-green-400" id="bond-apy-28d">--%</td>
+                                <td class="py-2 text-right text-green-400" id="bond-apy-ltd">--%</td>
                             </tr>
                             <tr class="border-t border-gray-700">
                                 <td class="py-3 font-bold">NET APY</td>
-                                <td class="py-3 text-right font-bold text-yellow-400" id="net-apy-7d">--%</td>
                                 <td class="py-3 text-right font-bold text-yellow-400" id="net-apy-28d">--%</td>
+                                <td class="py-3 text-right font-bold text-yellow-400" id="net-apy-ltd">--%</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
+                <p class="mt-3 text-xs text-gray-500">*Bond APY uses current stETH rate</p>
             </div>
         </div>
     </div>
@@ -235,6 +240,7 @@ def create_app() -> FastAPI:
             results.classList.add('hidden');
             validatorStatus.classList.add('hidden');
             apySection.classList.add('hidden');
+            document.getElementById('active-since-row').classList.add('hidden');
             loadDetailsBtn.classList.remove('hidden');
             loadDetailsBtn.disabled = false;
             loadDetailsBtn.textContent = 'Load Validator Status & APY (Beacon Chain)';
@@ -319,14 +325,22 @@ def create_app() -> FastAPI:
 
                 // Populate APY metrics if available
                 if (data.apy) {
-                    document.getElementById('reward-apy-7d').textContent = formatApy(data.apy.reward_apy_7d);
-                    document.getElementById('reward-apy-28d').textContent = formatApy(data.apy.reward_apy_28d);
-                    document.getElementById('bond-apy-7d').textContent = formatApy(data.apy.bond_apy);
+                    document.getElementById('reward-apy-28d').textContent = formatApy(data.apy.historical_reward_apy_28d);
+                    document.getElementById('reward-apy-ltd').textContent = formatApy(data.apy.historical_reward_apy_ltd);
                     document.getElementById('bond-apy-28d').textContent = formatApy(data.apy.bond_apy);
-                    document.getElementById('net-apy-7d').textContent = formatApy(data.apy.net_apy_7d);
+                    document.getElementById('bond-apy-ltd').textContent = formatApy(data.apy.bond_apy);
                     document.getElementById('net-apy-28d').textContent = formatApy(data.apy.net_apy_28d);
+                    document.getElementById('net-apy-ltd').textContent = formatApy(data.apy.net_apy_ltd);
 
                     apySection.classList.remove('hidden');
+                }
+
+                // Display Active Since date if available
+                if (data.active_since) {
+                    const activeSince = new Date(data.active_since);
+                    const options = { year: 'numeric', month: 'short', day: 'numeric' };
+                    document.getElementById('active-since').textContent = activeSince.toLocaleDateString('en-US', options);
+                    document.getElementById('active-since-row').classList.remove('hidden');
                 }
             } catch (err) {
                 detailsLoading.classList.add('hidden');

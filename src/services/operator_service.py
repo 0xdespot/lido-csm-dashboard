@@ -8,7 +8,9 @@ from ..data.beacon import (
     ValidatorInfo,
     aggregate_validator_status,
     calculate_avg_effectiveness,
+    get_earliest_activation,
 )
+from ..data.ipfs_logs import IPFSLogProvider
 from ..data.lido_api import LidoAPIProvider
 from ..data.onchain import OnChainDataProvider
 from ..data.rewards_tree import RewardsTreeProvider
@@ -22,6 +24,7 @@ class OperatorService:
         self.rewards_tree = RewardsTreeProvider()
         self.beacon = BeaconDataProvider()
         self.lido_api = LidoAPIProvider()
+        self.ipfs_logs = IPFSLogProvider()
 
     async def get_operator_by_address(
         self, address: str, include_validators: bool = False
@@ -78,6 +81,7 @@ class OperatorService:
         validators_by_status: dict[str, int] | None = None
         avg_effectiveness: float | None = None
         apy_metrics: APYMetrics | None = None
+        active_since = None
 
         if include_validators and operator.total_deposited_keys > 0:
             # Get validator pubkeys
@@ -88,11 +92,12 @@ class OperatorService:
             validator_details = await self.beacon.get_validators_by_pubkeys(pubkeys)
             validators_by_status = aggregate_validator_status(validator_details)
             avg_effectiveness = calculate_avg_effectiveness(validator_details)
+            active_since = get_earliest_activation(validator_details)
 
-            # Step 9: Calculate APY metrics
+            # Step 9: Calculate APY metrics (using historical IPFS data)
             apy_metrics = await self.calculate_apy_metrics(
+                operator_id=operator_id,
                 bond_eth=bond.current_bond_eth,
-                unclaimed_eth=unclaimed_eth,
             )
 
         return OperatorRewards(
@@ -116,6 +121,7 @@ class OperatorService:
             validators_by_status=validators_by_status,
             avg_effectiveness=avg_effectiveness,
             apy=apy_metrics,
+            active_since=active_since,
         )
 
     async def get_all_operators_with_rewards(self) -> list[int]:
@@ -124,50 +130,65 @@ class OperatorService:
 
     async def calculate_apy_metrics(
         self,
+        operator_id: int,
         bond_eth: Decimal,
-        unclaimed_eth: Decimal,
     ) -> APYMetrics:
-        """Calculate APY metrics for an operator.
+        """Calculate APY metrics for an operator using historical IPFS data.
 
         Note: Validator APY (consensus rewards) is NOT calculated because CSM operators
         don't receive those rewards directly - they go to Lido protocol and are
         redistributed via CSM reward distributions (captured in reward_apy).
         """
-        # 1. Reward APY (CSM reward distributions)
-        # Estimate based on unclaimed rewards / bond over 28-day frame
-        reward_apy_7d = None
-        reward_apy_28d = None
+        historical_reward_apy_28d = None
+        historical_reward_apy_ltd = None
 
-        if bond_eth > 0 and unclaimed_eth > 0:
-            # CSM rewards accrue in 28-day frames
-            reward_apy_28d = float(
-                unclaimed_eth / bond_eth * Decimal(365.25 / 28) * 100
-            )
-            # Use same estimate for 7-day (without historical data)
-            reward_apy_7d = reward_apy_28d
+        # 1. Try to get historical APY from IPFS distribution logs
+        if bond_eth > 0:
+            try:
+                # Query historical log CIDs from contract events
+                log_history = await self.onchain.get_distribution_log_history()
+
+                if log_history:
+                    # Fetch operator's historical frame data
+                    frames = await self.ipfs_logs.get_operator_history(
+                        operator_id, log_history
+                    )
+
+                    if frames:
+                        # Calculate APY for 28-day and lifetime periods
+                        apy_results = self.ipfs_logs.calculate_historical_apy(
+                            frames=frames,
+                            bond_eth=bond_eth,
+                            periods=[28, None],  # 28-day and lifetime
+                        )
+                        historical_reward_apy_28d = apy_results.get("28d")
+                        historical_reward_apy_ltd = apy_results.get("ltd")
+            except Exception:
+                # If historical APY calculation fails, continue without it
+                pass
 
         # 2. Bond APY (stETH protocol rebase rate)
         steth_data = await self.lido_api.get_steth_apr()
         bond_apy = steth_data.get("apr")
 
-        # 3. Net APY (Reward APY + Bond APY)
-        net_apy_7d = None
+        # 3. Net APY (Historical Reward APY + Bond APY)
         net_apy_28d = None
+        net_apy_ltd = None
 
-        if reward_apy_7d is not None and bond_apy is not None:
-            net_apy_7d = reward_apy_7d + bond_apy
-        elif bond_apy is not None:
-            net_apy_7d = bond_apy
-
-        if reward_apy_28d is not None and bond_apy is not None:
-            net_apy_28d = reward_apy_28d + bond_apy
+        if historical_reward_apy_28d is not None and bond_apy is not None:
+            net_apy_28d = historical_reward_apy_28d + bond_apy
         elif bond_apy is not None:
             net_apy_28d = bond_apy
 
+        if historical_reward_apy_ltd is not None and bond_apy is not None:
+            net_apy_ltd = historical_reward_apy_ltd + bond_apy
+        elif bond_apy is not None:
+            net_apy_ltd = bond_apy
+
         return APYMetrics(
-            reward_apy_7d=reward_apy_7d,
-            reward_apy_28d=reward_apy_28d,
+            historical_reward_apy_28d=historical_reward_apy_28d,
+            historical_reward_apy_ltd=historical_reward_apy_ltd,
             bond_apy=bond_apy,
-            net_apy_7d=net_apy_7d,
             net_apy_28d=net_apy_28d,
+            net_apy_ltd=net_apy_ltd,
         )

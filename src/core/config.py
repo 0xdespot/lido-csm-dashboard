@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     beacon_api_url: str = "https://beaconcha.in/api/v1"
     beacon_api_key: str | None = None  # Optional beaconcha.in API key for higher rate limits
 
+    # Etherscan API (optional, for historical event queries)
+    etherscan_api_key: str | None = None
+
     # Data Sources
     rewards_proofs_url: str = (
         "https://raw.githubusercontent.com/lidofinance/csm-rewards/mainnet/proofs.json"

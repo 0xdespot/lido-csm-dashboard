@@ -71,12 +71,16 @@ async def get_operator(
     # Add APY metrics if available
     if rewards.apy:
         result["apy"] = {
-            "reward_apy_7d": rewards.apy.reward_apy_7d,
-            "reward_apy_28d": rewards.apy.reward_apy_28d,
+            "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
+            "historical_reward_apy_ltd": rewards.apy.historical_reward_apy_ltd,
             "bond_apy": rewards.apy.bond_apy,
-            "net_apy_7d": rewards.apy.net_apy_7d,
             "net_apy_28d": rewards.apy.net_apy_28d,
+            "net_apy_ltd": rewards.apy.net_apy_ltd,
         }
+
+    # Add active_since if available
+    if rewards.active_since:
+        result["active_since"] = rewards.active_since.isoformat()
 
     return result
 

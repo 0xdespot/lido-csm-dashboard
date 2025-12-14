@@ -13,30 +13,32 @@ from ..core.contracts import (
 )
 from ..core.types import BondSummary, NodeOperator
 from .cache import cached
+from .etherscan import EtherscanProvider
+from .known_cids import KNOWN_DISTRIBUTION_LOGS
 
 
 class OnChainDataProvider:
     """Fetches data from Ethereum contracts."""
 
     def __init__(self, rpc_url: str | None = None):
-        settings = get_settings()
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url or settings.eth_rpc_url))
+        self.settings = get_settings()
+        self.w3 = Web3(Web3.HTTPProvider(rpc_url or self.settings.eth_rpc_url))
 
         # Initialize contracts
         self.csmodule = self.w3.eth.contract(
-            address=Web3.to_checksum_address(settings.csmodule_address),
+            address=Web3.to_checksum_address(self.settings.csmodule_address),
             abi=CSMODULE_ABI,
         )
         self.csaccounting = self.w3.eth.contract(
-            address=Web3.to_checksum_address(settings.csaccounting_address),
+            address=Web3.to_checksum_address(self.settings.csaccounting_address),
             abi=CSACCOUNTING_ABI,
         )
         self.csfeedistributor = self.w3.eth.contract(
-            address=Web3.to_checksum_address(settings.csfeedistributor_address),
+            address=Web3.to_checksum_address(self.settings.csfeedistributor_address),
             abi=CSFEEDISTRIBUTOR_ABI,
         )
         self.steth = self.w3.eth.contract(
-            address=Web3.to_checksum_address(settings.steth_address),
+            address=Web3.to_checksum_address(self.settings.steth_address),
             abi=STETH_ABI,
         )
 
@@ -174,3 +176,84 @@ class OnChainDataProvider:
                 keys.append(key)
 
         return keys
+
+    def get_current_log_cid(self) -> str:
+        """Get the current distribution log CID from the contract."""
+        return self.csfeedistributor.functions.logCid().call()
+
+    @cached(ttl=3600)  # Cache for 1 hour since historical events don't change
+    async def get_distribution_log_history(
+        self, start_block: int | None = None
+    ) -> list[dict]:
+        """
+        Query DistributionLogUpdated events to get historical logCids.
+
+        Tries multiple methods in order:
+        1. Etherscan API (if API key configured) - most reliable
+        2. Chunked RPC queries (10k block chunks) - works on some RPCs
+        3. Hardcoded known CIDs - fallback for users without API keys
+        4. Current logCid from contract - ultimate fallback
+
+        Args:
+            start_block: Starting block number (default: CSM deployment ~20873000)
+
+        Returns:
+            List of {block, logCid} dicts, sorted by block number (oldest first)
+        """
+        # CSM was deployed around block 20873000 (Dec 2024)
+        if start_block is None:
+            start_block = 20873000
+
+        # 1. Try Etherscan API first (most reliable)
+        etherscan = EtherscanProvider()
+        if etherscan.is_available():
+            events = await etherscan.get_distribution_log_events(
+                self.settings.csfeedistributor_address,
+                start_block,
+            )
+            if events:
+                return events
+
+        # 2. Try chunked RPC queries
+        events = await self._query_events_chunked(start_block)
+        if events:
+            return events
+
+        # 3. Use known historical CIDs as fallback
+        if KNOWN_DISTRIBUTION_LOGS:
+            return KNOWN_DISTRIBUTION_LOGS
+
+        # 4. Ultimate fallback: current logCid only
+        try:
+            current_cid = self.get_current_log_cid()
+            if current_cid:
+                current_block = self.w3.eth.block_number
+                return [{"block": current_block, "logCid": current_cid}]
+        except Exception:
+            pass
+
+        return []
+
+    async def _query_events_chunked(
+        self, start_block: int, chunk_size: int = 10000
+    ) -> list[dict]:
+        """Query events in smaller chunks to work around RPC limitations."""
+        current_block = self.w3.eth.block_number
+        all_events = []
+
+        for from_block in range(start_block, current_block, chunk_size):
+            to_block = min(from_block + chunk_size - 1, current_block)
+            try:
+                events = self.csfeedistributor.events.DistributionLogUpdated.get_logs(
+                    from_block=from_block,
+                    to_block=to_block,
+                )
+                for e in events:
+                    all_events.append(
+                        {"block": e["blockNumber"], "logCid": e["args"]["logCid"]}
+                    )
+            except Exception:
+                # If chunked queries fail, give up on this method
+                return []
+
+        return sorted(all_events, key=lambda x: x["block"])
