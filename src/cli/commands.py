@@ -36,7 +36,9 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
             "required_bond_eth": float(rewards.required_bond_eth),
             "excess_bond_eth": float(rewards.excess_bond_eth),
             "cumulative_rewards_shares": rewards.cumulative_rewards_shares,
+            "cumulative_rewards_eth": float(rewards.cumulative_rewards_eth),
             "distributed_shares": rewards.distributed_shares,
+            "distributed_eth": float(rewards.distributed_eth),
             "unclaimed_shares": rewards.unclaimed_shares,
             "unclaimed_eth": float(rewards.unclaimed_eth),
             "total_claimable_eth": float(rewards.total_claimable_eth),
@@ -175,18 +177,18 @@ def check(
     rewards_table.add_row("", "", "")
     rewards_table.add_row(
         "Cumulative Rewards",
-        f"{rewards.cumulative_rewards_shares:,} shares",
-        "All-time total",
+        f"{rewards.cumulative_rewards_eth:.6f} ETH",
+        f"({rewards.cumulative_rewards_shares:,} shares)" if detailed else "All-time total",
     )
     rewards_table.add_row(
         "Already Distributed",
-        f"{rewards.distributed_shares:,} shares",
-        "",
+        f"{rewards.distributed_eth:.6f} ETH",
+        f"({rewards.distributed_shares:,} shares)" if detailed else "",
     )
     rewards_table.add_row(
         "Unclaimed Rewards",
         f"[bold green]{rewards.unclaimed_eth:.6f} ETH[/bold green]",
-        f"({rewards.unclaimed_shares:,} shares)",
+        f"({rewards.unclaimed_shares:,} shares)" if detailed else "",
     )
     rewards_table.add_row("", "", "")
     rewards_table.add_row(

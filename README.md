@@ -155,14 +155,16 @@ csm check --id 333 --json
   "manager_address": "0x6ac683C503CF210CCF88193ec7ebDe2c993f63a4",
   "reward_address": "0x55915Cf2115c4D6e9085e94c8dAD710cabefef31",
   "rewards": {
-    "current_bond_eth": 651.5077659633782,
+    "current_bond_eth": 651.5523536856277,
     "required_bond_eth": 650.2,
-    "excess_bond_eth": 1.3077659633781948,
+    "excess_bond_eth": 1.3523536856277778,
     "cumulative_rewards_shares": 8973877501313655495,
+    "cumulative_rewards_eth": 10.9642938931415,
     "distributed_shares": 7867435720490255061,
+    "distributed_eth": 9.61244204773546,
     "unclaimed_shares": 1106441780823400434,
-    "unclaimed_eth": 1.3517593340456497,
-    "total_claimable_eth": 2.6595252974238446
+    "unclaimed_eth": 1.3518518454060409,
+    "total_claimable_eth": 2.7042055310338187
   },
   "validators": {
     "total": 500,

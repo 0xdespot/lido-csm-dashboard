@@ -83,7 +83,9 @@ class OperatorRewards(BaseModel):
 
     # Rewards information
     cumulative_rewards_shares: int
+    cumulative_rewards_eth: Decimal
     distributed_shares: int
+    distributed_eth: Decimal
     unclaimed_shares: int
     unclaimed_eth: Decimal
 

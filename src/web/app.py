@@ -105,6 +105,14 @@ def create_app() -> FastAPI:
                     </div>
                     <hr class="border-gray-700">
                     <div class="flex justify-between">
+                        <span class="text-gray-400">Cumulative Rewards</span>
+                        <span><span id="cumulative-rewards">0</span> ETH</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">Already Distributed</span>
+                        <span><span id="distributed-rewards">0</span> ETH</span>
+                    </div>
+                    <div class="flex justify-between">
                         <span class="text-gray-400">Unclaimed Rewards</span>
                         <span class="text-green-400"><span id="unclaimed-rewards">0</span> ETH</span>
                     </div>
@@ -259,6 +267,8 @@ def create_app() -> FastAPI:
                 document.getElementById('current-bond').textContent = data.rewards.current_bond_eth.toFixed(6);
                 document.getElementById('required-bond').textContent = data.rewards.required_bond_eth.toFixed(6);
                 document.getElementById('excess-bond').textContent = data.rewards.excess_bond_eth.toFixed(6);
+                document.getElementById('cumulative-rewards').textContent = data.rewards.cumulative_rewards_eth.toFixed(6);
+                document.getElementById('distributed-rewards').textContent = data.rewards.distributed_eth.toFixed(6);
                 document.getElementById('unclaimed-rewards').textContent = data.rewards.unclaimed_eth.toFixed(6);
                 document.getElementById('total-claimable').textContent = data.rewards.total_claimable_eth.toFixed(6);
 

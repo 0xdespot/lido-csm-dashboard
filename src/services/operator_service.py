@@ -67,6 +67,8 @@ class OperatorService:
 
         # Step 6: Convert shares to ETH
         unclaimed_eth = await self.onchain.shares_to_eth(unclaimed_shares)
+        cumulative_eth = await self.onchain.shares_to_eth(cumulative_shares)
+        distributed_eth = await self.onchain.shares_to_eth(distributed)
 
         # Step 7: Calculate total claimable
         total_claimable = bond.excess_bond_eth + unclaimed_eth
@@ -101,7 +103,9 @@ class OperatorService:
             required_bond_eth=bond.required_bond_eth,
             excess_bond_eth=bond.excess_bond_eth,
             cumulative_rewards_shares=cumulative_shares,
+            cumulative_rewards_eth=cumulative_eth,
             distributed_shares=distributed,
+            distributed_eth=distributed_eth,
             unclaimed_shares=unclaimed_shares,
             unclaimed_eth=unclaimed_eth,
             total_claimable_eth=total_claimable,
