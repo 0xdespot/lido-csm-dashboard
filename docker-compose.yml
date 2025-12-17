@@ -1,0 +1,46 @@
+services:
+  csm-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: csm-dashboard
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      # Ethereum RPC Configuration
+      ETH_RPC_URL: ${ETH_RPC_URL:-https://eth.llamarpc.com}
+      
+      # Beacon Chain Configuration
+      BEACON_API_URL: ${BEACON_API_URL:-https://beaconcha.in/api/v1}
+      BEACON_API_KEY: ${BEACON_API_KEY:-}
+      
+      # Etherscan Configuration
+      ETHERSCAN_API_KEY: ${ETHERSCAN_API_KEY:-}
+      
+      # Cache Configuration
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-300}
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    networks:
+      - csm-network
+
+networks:
+  csm-network:
+    driver: bridge

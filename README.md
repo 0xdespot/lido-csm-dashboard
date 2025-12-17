@@ -19,6 +19,27 @@ Track your Lido Community Staking Module (CSM) validator earnings, excess bond, 
 
 ## Installation
 
+### Option 1: Docker (Recommended)
+
+```bash
+# Clone the repository
+git clone <repo-url>
+cd lido-csm-dashboard
+
+# Copy and configure environment
+cp .env.example .env
+
+# Start the web dashboard
+docker compose up -d
+
+# View logs
+docker compose logs -f
+```
+
+The web dashboard will be available at http://localhost:3000
+
+### Option 2: Local Python Installation
+
 ```bash
 # Clone the repository
 git clone <repo-url>
@@ -47,6 +68,32 @@ Available settings:
 - `CACHE_TTL_SECONDS`: Cache duration in seconds (default: 300)
 
 ## Usage
+
+### Docker Usage
+
+The web dashboard runs automatically when you start the container. You can also use CLI commands inside the container:
+
+```bash
+# Check operator rewards
+docker compose exec csm-dashboard csm check 0xYourAddress
+
+# Check by operator ID
+docker compose exec csm-dashboard csm check --id 42
+
+# Get detailed info with APY metrics
+docker compose exec csm-dashboard csm check --id 42 --detailed
+
+# JSON output
+docker compose exec csm-dashboard csm check --id 42 --json
+
+# List all operators
+docker compose exec csm-dashboard csm list
+
+# Monitor continuously (refresh every 60 seconds)
+docker compose exec csm-dashboard csm watch 0xYourAddress --interval 60
+```
+
+### Local CLI Usage
 
 ### `csm check` - Check operator rewards
 
@@ -141,6 +188,8 @@ csm serve --reload
 ```
 
 Then open http://localhost:8080 in your browser.
+
+**Docker:** The web dashboard is already running when you use `docker compose up`. Access it at http://localhost:3000
 
 ## JSON Output
 
