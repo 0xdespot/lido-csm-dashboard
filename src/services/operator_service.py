@@ -10,6 +10,7 @@ from ..data.beacon import (
     calculate_avg_effectiveness,
     count_at_risk_validators,
     count_slashed_validators,
+    epoch_to_datetime,
     get_earliest_activation,
 )
 from ..data.ipfs_logs import IPFSLogProvider
@@ -253,3 +254,66 @@ class OperatorService:
     async def get_operator_strikes(self, operator_id: int):
         """Get detailed strikes for an operator's validators."""
         return await self.strikes.get_operator_strikes(operator_id)
+
+    async def get_recent_frame_dates(self, count: int = 6) -> list[dict]:
+        """Get date ranges for the most recent N distribution frames.
+
+        Returns list of {start, end} dicts with formatted date strings,
+        ordered from oldest to newest (matching strikes array order).
+        """
+        try:
+            log_history = await self.onchain.get_distribution_log_history()
+        except Exception:
+            return []
+
+        if not log_history:
+            return []
+
+        # Get last N frames (log_history is already sorted oldest-first)
+        recent_logs = log_history[-count:] if len(log_history) >= count else log_history
+
+        frame_dates = []
+        for entry in recent_logs:
+            try:
+                log_data = await self.ipfs_logs.fetch_log(entry["logCid"])
+                if log_data:
+                    start_epoch, end_epoch = self.ipfs_logs.get_frame_info(log_data)
+                    start_date = epoch_to_datetime(start_epoch)
+                    end_date = epoch_to_datetime(end_epoch)
+                    frame_dates.append({
+                        "start": start_date.strftime("%b %d"),
+                        "end": end_date.strftime("%b %d"),
+                    })
+            except Exception:
+                # Skip frames we can't fetch
+                continue
+
+        # Pad to ensure we always have `count` entries (for UI consistency)
+        # Pad at the beginning since strikes array is ordered oldest to newest
+        while len(frame_dates) < count:
+            idx = count - len(frame_dates)
+            frame_dates.insert(0, {"start": f"Frame {idx}", "end": ""})
+
+        return frame_dates
+
+    async def get_operator_active_since(self, operator_id: int):
+        """Get operator's first validator activation date (lightweight).
+
+        Returns datetime or None if no validators have been activated.
+        """
+        from datetime import datetime
+
+        try:
+            operator = await self.onchain.get_node_operator(operator_id)
+            if operator.total_deposited_keys == 0:
+                return None
+
+            # Get just the first pubkey to minimize beacon chain API calls
+            pubkeys = await self.onchain.get_signing_keys(operator_id, 0, 1)
+            if not pubkeys:
+                return None
+
+            validators = await self.beacon.get_validators_by_pubkeys(pubkeys)
+            return get_earliest_activation(validators)
+        except Exception:
+            return None

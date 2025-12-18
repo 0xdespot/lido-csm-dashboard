@@ -55,9 +55,12 @@ def create_app() -> FastAPI:
 
         <div id="results" class="hidden">
             <div class="bg-gray-800 rounded-lg p-6 mb-6">
-                <h2 class="text-xl font-bold mb-4">
+                <h2 class="text-xl font-bold mb-2">
                     Operator #<span id="operator-id"></span>
                 </h2>
+                <div id="active-since-row" class="hidden text-sm text-green-400 mb-3">
+                    Active Since: <span id="active-since"></span>
+                </div>
                 <div class="grid grid-cols-2 gap-4 text-sm">
                     <div>
                         <span class="text-gray-400">Manager:</span>
@@ -70,10 +73,6 @@ def create_app() -> FastAPI:
                 </div>
                 <div id="lookup-tip" class="hidden mt-3 text-sm text-gray-400 bg-gray-700/50 rounded px-3 py-2">
                     Tip: Use operator ID <span id="tip-operator-id" class="font-bold text-blue-400"></span> directly for faster lookups
-                </div>
-                <div id="active-since-row" class="hidden mt-3">
-                    <span class="text-gray-400">Active Since:</span>
-                    <span id="active-since" class="font-medium text-green-400"></span>
                 </div>
             </div>
 
@@ -286,6 +285,15 @@ def create_app() -> FastAPI:
             loadDetailsBtn.disabled = false;
             loadDetailsBtn.textContent = 'Load Validator Status & APY (Beacon Chain)';
 
+            // Reset strikes state for new search
+            const strikesDetailDiv = document.getElementById('strikes-detail');
+            const strikesList = document.getElementById('strikes-list');
+            if (strikesDetailDiv) strikesDetailDiv.classList.add('hidden');
+            if (strikesList) {
+                strikesList.classList.add('hidden');
+                strikesList.innerHTML = '';
+            }
+
             try {
                 const response = await fetch(`/api/operator/${input}`);
                 const data = await response.json();
@@ -302,6 +310,14 @@ def create_app() -> FastAPI:
                 document.getElementById('operator-id').textContent = data.operator_id;
                 document.getElementById('manager-address').textContent = data.manager_address;
                 document.getElementById('reward-address').textContent = data.reward_address;
+
+                // Show Active Since if available
+                if (data.active_since) {
+                    const activeSince = new Date(data.active_since);
+                    const options = { year: 'numeric', month: 'short', day: 'numeric' };
+                    document.getElementById('active-since').textContent = activeSince.toLocaleDateString('en-US', options);
+                    document.getElementById('active-since-row').classList.remove('hidden');
+                }
 
                 // Show tip with operator ID for faster lookups
                 document.getElementById('tip-operator-id').textContent = data.operator_id;
@@ -443,25 +459,57 @@ def create_app() -> FastAPI:
                         strikesDetailDiv.classList.remove('hidden');
                         let strikesLoaded = false;
 
+                        // Function to load strikes data
+                        const loadStrikesData = async () => {
+                            if (strikesLoaded) return;
+                            strikesList.innerHTML = '<div class="text-gray-400">Loading...</div>';
+                            strikesList.classList.remove('hidden');
+                            try {
+                                const opId = document.getElementById('operator-id').textContent;
+                                const strikesResp = await fetch(`/api/operator/${opId}/strikes`);
+                                const strikesData = await strikesResp.json();
+                                strikesList.innerHTML = strikesData.validators.map(v => {
+                                    const colorClass = v.at_ejection_risk ? 'text-red-400' :
+                                        (v.strike_count === 2 ? 'text-orange-400' : 'text-yellow-400');
+
+                                    // Generate 6 dots with date tooltips
+                                    const dots = v.strikes.map((strike, i) => {
+                                        const frame = strikesData.frame_dates && strikesData.frame_dates[i];
+                                        const dateRange = frame ? `${frame.start} - ${frame.end}` : `Frame ${i + 1}`;
+                                        const tooltip = `${dateRange}: ${strike ? 'Strike' : 'OK'}`;
+                                        const color = strike ? 'text-red-500' : 'text-green-500';
+                                        return `<span class="${color} cursor-help" title="${tooltip}">●</span>`;
+                                    }).join('');
+
+                                    // Truncated pubkey with copy + beaconcha.in link
+                                    const shortPubkey = v.pubkey.slice(0, 10) + '...' + v.pubkey.slice(-8);
+                                    const beaconUrl = `https://beaconcha.in/validator/${v.pubkey}`;
+
+                                    return `<div class="flex items-center gap-2 py-1.5 border-b border-gray-700 last:border-0 ${colorClass}">
+                                        <span class="font-mono text-xs">${shortPubkey}</span>
+                                        <button onclick="navigator.clipboard.writeText('${v.pubkey}'); this.textContent='✓'; setTimeout(() => this.textContent='📋', 1000)"
+                                                class="text-gray-400 hover:text-white text-sm" title="Copy full address">📋</button>
+                                        <a href="${beaconUrl}" target="_blank" rel="noopener"
+                                           class="text-blue-400 hover:text-blue-300 text-sm" title="View on beaconcha.in">↗</a>
+                                        <span class="flex gap-0.5 text-base ml-1">${dots}</span>
+                                        <span class="text-gray-400 text-xs">(${v.strike_count}/3)</span>
+                                    </div>`;
+                                }).join('');
+                                strikesLoaded = true;
+                                toggleStrikesBtn.textContent = 'Hide validator details ▲';
+                            } catch (err) {
+                                strikesList.innerHTML = '<div class="text-red-400">Failed to load strikes</div>';
+                            }
+                        };
+
+                        // Auto-load strikes data when there are strikes
+                        loadStrikesData();
+
                         toggleStrikesBtn.onclick = async () => {
                             if (strikesList.classList.contains('hidden')) {
-                                // Expand - fetch data if not loaded
+                                // Expand
                                 if (!strikesLoaded) {
-                                    strikesList.innerHTML = '<div class="text-gray-400">Loading...</div>';
-                                    strikesList.classList.remove('hidden');
-                                    try {
-                                        const opId = document.getElementById('operator-id').textContent;
-                                        const strikesResp = await fetch(`/api/operator/${opId}/strikes`);
-                                        const strikesData = await strikesResp.json();
-                                        strikesList.innerHTML = strikesData.validators.map(v => {
-                                            const colorClass = v.at_ejection_risk ? 'text-red-400' :
-                                                (v.strike_count === 2 ? 'text-orange-400' : 'text-yellow-400');
-                                            return `<div class="${colorClass}">${v.pubkey}: ${v.strike_count}/3</div>`;
-                                        }).join('');
-                                        strikesLoaded = true;
-                                    } catch (err) {
-                                        strikesList.innerHTML = '<div class="text-red-400">Failed to load strikes</div>';
-                                    }
+                                    await loadStrikesData();
                                 } else {
                                     strikesList.classList.remove('hidden');
                                 }

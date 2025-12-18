@@ -56,6 +56,13 @@ async def get_operator(
         },
     }
 
+    # Fetch active_since for basic (non-detailed) requests
+    # For detailed requests, it's already included in rewards.active_since
+    if not detailed and rewards.total_validators > 0:
+        active_since = await service.get_operator_active_since(rewards.node_operator_id)
+        if active_since:
+            result["active_since"] = active_since.isoformat()
+
     # Add beacon chain validator details if available
     if rewards.validators_by_status:
         result["validators"]["by_status"] = rewards.validators_by_status
@@ -127,8 +134,13 @@ async def get_operator_strikes(identifier: str):
         raise HTTPException(status_code=400, detail="Invalid identifier format")
 
     strikes = await service.get_operator_strikes(operator_id)
+
+    # Fetch frame dates for tooltip display
+    frame_dates = await service.get_recent_frame_dates(6)
+
     return {
         "operator_id": operator_id,
+        "frame_dates": frame_dates,
         "validators": [
             {
                 "pubkey": s.pubkey,
