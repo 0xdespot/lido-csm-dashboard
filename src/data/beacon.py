@@ -225,7 +225,7 @@ class BeaconDataProvider:
             balance_gwei=data.get("balance", 0),
             effectiveness=data.get("effectiveness"),
             activation_epoch=data.get("activationepoch"),
-            exit_epoch=data.get("exitepoch") if data.get("exitepoch", -1) >= 0 else None,
+            exit_epoch=data.get("exitepoch") if data.get("exitepoch") is not None and data.get("exitepoch") >= 0 else None,
         )
 
     @cached(ttl=300)

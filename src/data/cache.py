@@ -9,7 +9,7 @@ from ..core.config import get_settings
 
 
 class SimpleCache:
-    """Thread-safe in-memory cache with TTL."""
+    """Simple in-memory cache with TTL. Safe for single-threaded async but not thread-safe."""
 
     def __init__(self, default_ttl: int | None = None):
         self._cache: dict[str, tuple[Any, datetime]] = {}
@@ -45,7 +45,8 @@ def cached(ttl: int | None = None) -> Callable:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             # Create cache key from function name and arguments
-            key_data = f"{func.__module__}.{func.__name__}:{args}:{sorted(kwargs.items())}"
+            # Use repr() for proper tuple/list representation to avoid collisions
+            key_data = f"{func.__module__}.{func.__name__}:{repr(args)}:{repr(sorted(kwargs.items()))}"
             cache_key = hashlib.md5(key_data.encode()).hexdigest()
 
             cached_result = _cache.get(cache_key)
