@@ -1,5 +1,6 @@
 """Fetch and parse the strikes merkle tree from IPFS via CSStrikes contract."""
 
+import asyncio
 import json
 import time
 from dataclasses import dataclass
@@ -52,6 +53,7 @@ class StrikesProvider:
         self.cache_dir = cache_dir or Path.home() / ".cache" / "csm-dashboard" / "strikes"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._last_request_time = 0.0
+        self._rate_limit_lock = asyncio.Lock()
 
         # Initialize CSStrikes contract
         self.csstrikes = self.w3.eth.contract(
@@ -83,13 +85,14 @@ class StrikesProvider:
         except OSError:
             pass
 
-    def _rate_limit(self) -> None:
+    async def _rate_limit(self) -> None:
         """Ensure minimum interval between IPFS gateway requests."""
-        now = time.time()
-        elapsed = now - self._last_request_time
-        if elapsed < self.MIN_REQUEST_INTERVAL:
-            time.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
-        self._last_request_time = time.time()
+        async with self._rate_limit_lock:
+            now = time.time()
+            elapsed = now - self._last_request_time
+            if elapsed < self.MIN_REQUEST_INTERVAL:
+                await asyncio.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
+            self._last_request_time = time.time()
 
     @cached(ttl=300)  # Cache CID for 5 minutes
     async def get_tree_cid(self) -> str:
@@ -104,7 +107,7 @@ class StrikesProvider:
             return cached_data
 
         # Rate limit gateway requests
-        self._rate_limit()
+        await self._rate_limit()
 
         # Try each gateway
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
