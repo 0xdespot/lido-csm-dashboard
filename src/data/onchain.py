@@ -1,5 +1,6 @@
 """On-chain data fetching via Web3."""
 
+import asyncio
 from decimal import Decimal
 
 from web3 import Web3
@@ -77,8 +78,6 @@ class OnChainDataProvider:
         Tries batch requests first (faster if RPC supports JSON-RPC batching).
         Falls back to sequential calls with rate limiting if batch fails.
         """
-        import time
-
         address = Web3.to_checksum_address(address)
         total = await self.get_node_operators_count()
 
@@ -116,9 +115,9 @@ class OnChainDataProvider:
                     if manager.lower() == address.lower() or reward.lower() == address.lower():
                         return op_id
                     # Small delay to avoid rate limiting on public RPCs
-                    time.sleep(0.05)
+                    await asyncio.sleep(0.05)
                 except Exception:
-                    time.sleep(0.1)  # Longer delay on error
+                    await asyncio.sleep(0.1)  # Longer delay on error
                     continue
 
         return None
