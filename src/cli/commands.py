@@ -442,6 +442,19 @@ def health(
     if output_json:
         result = {"operator_id": rewards.node_operator_id}
         if rewards.health:
+            # Fetch validator strikes details
+            validator_strikes = []
+            if rewards.health.strikes.total_validators_with_strikes > 0:
+                strikes_data = run_async(service.get_operator_strikes(rewards.node_operator_id))
+                validator_strikes = [
+                    {
+                        "pubkey": vs.pubkey,
+                        "strike_count": vs.strike_count,
+                        "at_ejection_risk": vs.at_ejection_risk,
+                    }
+                    for vs in strikes_data
+                ]
+
             result["health"] = {
                 "bond_healthy": rewards.health.bond_healthy,
                 "bond_deficit_eth": float(rewards.health.bond_deficit_eth),
@@ -451,7 +464,10 @@ def health(
                 "strikes": {
                     "total_validators_with_strikes": rewards.health.strikes.total_validators_with_strikes,
                     "validators_at_risk": rewards.health.strikes.validators_at_risk,
+                    "validators_near_ejection": rewards.health.strikes.validators_near_ejection,
                     "total_strikes": rewards.health.strikes.total_strikes,
+                    "max_strikes": rewards.health.strikes.max_strikes,
+                    "validators": validator_strikes,
                 },
                 "has_issues": rewards.health.has_issues,
             }
@@ -572,13 +588,19 @@ def watch(
     Continuously monitor rewards with live updates.
     Press Ctrl+C to stop.
     """
-    while True:
-        console.clear()
-        check(address, rpc_url=rpc_url)
-        console.print(
-            f"\n[dim]Refreshing every {interval} seconds... Press Ctrl+C to stop[/dim]"
-        )
-        time.sleep(interval)
+    try:
+        while True:
+            console.clear()
+            try:
+                check(address, rpc_url=rpc_url)
+            except Exception as e:
+                console.print(f"[red]Error: {e}[/red]")
+            console.print(
+                f"\n[dim]Refreshing every {interval} seconds... Press Ctrl+C to stop[/dim]"
+            )
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Watch stopped.[/yellow]")
 
 
 @app.command(name="list")
