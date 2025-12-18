@@ -76,6 +76,38 @@ class APYMetrics(BaseModel):
     net_apy_7d: float | None = None
 
 
+class StrikeSummary(BaseModel):
+    """Summary of strikes for an operator."""
+
+    total_validators_with_strikes: int = 0
+    validators_at_risk: int = 0  # Validators with 3+ strikes (ejection eligible)
+    validators_near_ejection: int = 0  # Validators with 2 strikes (one away from ejection)
+    total_strikes: int = 0
+    max_strikes: int = 0  # Highest strike count on any single validator
+
+
+class HealthStatus(BaseModel):
+    """Overall health status for an operator."""
+
+    bond_healthy: bool = True
+    bond_deficit_eth: Decimal = Decimal(0)
+    stuck_validators_count: int = 0
+    slashed_validators_count: int = 0
+    validators_at_risk_count: int = 0  # Validators with balance < 32 ETH
+    strikes: StrikeSummary = StrikeSummary()
+
+    @property
+    def has_issues(self) -> bool:
+        """Check if there are any health issues."""
+        return (
+            not self.bond_healthy
+            or self.stuck_validators_count > 0
+            or self.slashed_validators_count > 0
+            or self.validators_at_risk_count > 0
+            or self.strikes.total_validators_with_strikes > 0  # Any strikes = warning
+        )
+
+
 class OperatorRewards(BaseModel):
     """Complete rewards summary for display."""
 
@@ -116,3 +148,6 @@ class OperatorRewards(BaseModel):
 
     # Operator activation date (from earliest validator activation)
     active_since: datetime | None = None
+
+    # Health status (optional, requires detailed lookup)
+    health: HealthStatus | None = None

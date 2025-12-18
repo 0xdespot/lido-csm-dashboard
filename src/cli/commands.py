@@ -76,6 +76,22 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
     if rewards.active_since:
         result["active_since"] = rewards.active_since.isoformat()
 
+    # Add health status if available
+    if rewards.health:
+        result["health"] = {
+            "bond_healthy": rewards.health.bond_healthy,
+            "bond_deficit_eth": float(rewards.health.bond_deficit_eth),
+            "stuck_validators_count": rewards.health.stuck_validators_count,
+            "slashed_validators_count": rewards.health.slashed_validators_count,
+            "validators_at_risk_count": rewards.health.validators_at_risk_count,
+            "strikes": {
+                "total_validators_with_strikes": rewards.health.strikes.total_validators_with_strikes,
+                "validators_at_risk": rewards.health.strikes.validators_at_risk,
+                "total_strikes": rewards.health.strikes.total_strikes,
+            },
+            "has_issues": rewards.health.has_issues,
+        }
+
     return result
 
 
@@ -102,13 +118,18 @@ def check(
 
     Examples:
         csm check 0xYourAddress
-        csm check --id 42
+        csm check 42
         csm check 0xYourAddress --json
-        csm check --id 42 --detailed
+        csm check 42 --detailed
     """
     if address is None and operator_id is None:
         console.print("[red]Error: Must provide either ADDRESS or --id[/red]")
         raise typer.Exit(1)
+
+    # Parse numeric address as operator ID
+    if address is not None and address.isdigit():
+        operator_id = int(address)
+        address = None
 
     service = OperatorService(rpc_url)
 
@@ -166,6 +187,126 @@ def check(
     console.print(val_table)
     console.print()
 
+    # Validator status breakdown (from beacon chain) - shown right after validators table
+    if detailed and rewards.validators_by_status:
+        status_table = Table(title="Validator Status (Beacon Chain)")
+        status_table.add_column("Status", style="cyan")
+        status_table.add_column("Count", style="green", justify="right")
+
+        status_order = ["active", "pending", "exiting", "exited", "slashed", "unknown"]
+        status_styles = {
+            "active": "green",
+            "pending": "yellow",
+            "exiting": "yellow",
+            "exited": "dim",
+            "slashed": "red bold",
+            "unknown": "dim",
+        }
+
+        for status in status_order:
+            count = rewards.validators_by_status.get(status, 0)
+            if count > 0:
+                style = status_styles.get(status, "white")
+                status_table.add_row(
+                    status.capitalize(),
+                    f"[{style}]{count}[/{style}]",
+                )
+
+        console.print(status_table)
+
+        if rewards.avg_effectiveness is not None:
+            console.print(
+                f"\n[cyan]Average Attestation Effectiveness:[/cyan] "
+                f"[bold green]{rewards.avg_effectiveness:.1f}%[/bold green]"
+            )
+        console.print()
+
+    # Health Status - shown right after validator status
+    if detailed and rewards.health:
+        health_table = Table(title="Health Status")
+        health_table.add_column("Check", style="cyan")
+        health_table.add_column("Status", justify="right")
+
+        # Bond health
+        if rewards.health.bond_healthy:
+            health_table.add_row("Bond", "[green]HEALTHY[/green]")
+        else:
+            health_table.add_row(
+                "Bond",
+                f"[red bold]DEFICIT -{rewards.health.bond_deficit_eth:.4f} ETH[/red bold]"
+            )
+
+        # Stuck validators
+        if rewards.health.stuck_validators_count == 0:
+            health_table.add_row("Stuck Validators", "[green]0[/green]")
+        else:
+            health_table.add_row(
+                "Stuck Validators",
+                f"[red bold]{rewards.health.stuck_validators_count}[/red bold] (exit within 4 days!)"
+            )
+
+        # Slashed validators
+        if rewards.health.slashed_validators_count == 0:
+            health_table.add_row("Slashed", "[green]0[/green]")
+        else:
+            health_table.add_row(
+                "Slashed",
+                f"[red bold]{rewards.health.slashed_validators_count}[/red bold] (est. 1-33 ETH penalty each)"
+            )
+
+        # At-risk validators (balance < 32 ETH)
+        if rewards.health.validators_at_risk_count == 0:
+            health_table.add_row("At Risk (<32 ETH)", "[green]0[/green]")
+        else:
+            health_table.add_row(
+                "At Risk (<32 ETH)",
+                f"[yellow]{rewards.health.validators_at_risk_count}[/yellow]"
+            )
+
+        # Strikes
+        strikes = rewards.health.strikes
+        if strikes.total_validators_with_strikes == 0:
+            health_table.add_row("Performance Strikes", "[green]0/3[/green]")
+        else:
+            # Build strike status message
+            strike_parts = []
+            if strikes.validators_at_risk > 0:
+                strike_parts.append(f"{strikes.validators_at_risk} at ejection")
+            if strikes.validators_near_ejection > 0:
+                strike_parts.append(f"{strikes.validators_near_ejection} near ejection")
+
+            strike_status = ", ".join(strike_parts) if strike_parts else "monitoring"
+            strike_style = "red bold" if strikes.validators_at_risk > 0 else (
+                "bright_yellow" if strikes.validators_near_ejection > 0 else "yellow"
+            )
+            health_table.add_row(
+                "Performance Strikes",
+                f"[{strike_style}]{strikes.total_validators_with_strikes} validators[/{strike_style}] "
+                f"({strike_status})"
+            )
+
+        console.print(health_table)
+
+        # Overall status - color-coded by severity
+        if not rewards.health.has_issues:
+            console.print("\n[bold green]Overall: No issues detected[/bold green]")
+        elif (
+            not rewards.health.bond_healthy
+            or rewards.health.stuck_validators_count > 0
+            or rewards.health.slashed_validators_count > 0
+            or rewards.health.validators_at_risk_count > 0
+            or strikes.max_strikes >= 3
+        ):
+            # Critical issues (red)
+            console.print("\n[bold red]Overall: Issues detected - review above[/bold red]")
+        elif strikes.max_strikes == 2:
+            # Warning level 2 (orange/bright yellow)
+            console.print("\n[bold bright_yellow]Overall: Warning - 2 strikes detected[/bold bright_yellow]")
+        else:
+            # Warning level 1 (yellow)
+            console.print("\n[bold yellow]Overall: Warning - strikes detected[/bold yellow]")
+        console.print()
+
     # Rewards table
     rewards_table = Table(title="Earnings Summary")
     rewards_table.add_column("Metric", style="cyan")
@@ -208,40 +349,6 @@ def check(
     console.print(rewards_table)
     console.print()
 
-    # Validator status breakdown (from beacon chain)
-    if detailed and rewards.validators_by_status:
-        status_table = Table(title="Validator Status (Beacon Chain)")
-        status_table.add_column("Status", style="cyan")
-        status_table.add_column("Count", style="green", justify="right")
-
-        status_order = ["active", "pending", "exiting", "exited", "slashed", "unknown"]
-        status_styles = {
-            "active": "green",
-            "pending": "yellow",
-            "exiting": "yellow",
-            "exited": "dim",
-            "slashed": "red bold",
-            "unknown": "dim",
-        }
-
-        for status in status_order:
-            count = rewards.validators_by_status.get(status, 0)
-            if count > 0:
-                style = status_styles.get(status, "white")
-                status_table.add_row(
-                    status.capitalize(),
-                    f"[{style}]{count}[/{style}]",
-                )
-
-        console.print(status_table)
-
-        if rewards.avg_effectiveness is not None:
-            console.print(
-                f"\n[cyan]Average Attestation Effectiveness:[/cyan] "
-                f"[bold green]{rewards.avg_effectiveness:.1f}%[/bold green]"
-            )
-        console.print()
-
     # APY Metrics table (only shown with --detailed flag)
     if detailed and rewards.apy:
         apy_table = Table(title="APY Metrics (Historical)")
@@ -272,6 +379,181 @@ def check(
         console.print(apy_table)
         console.print("[dim]*Bond APY uses current stETH rate[/dim]")
         console.print()
+
+
+@app.command()
+def health(
+    address: Optional[str] = typer.Argument(
+        None, help="Ethereum address (required unless --id is provided)"
+    ),
+    operator_id: Optional[int] = typer.Option(
+        None, "--id", "-i", help="Operator ID (skip address lookup)"
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc", "-r", help="Custom RPC URL"
+    ),
+    output_json: bool = typer.Option(
+        False, "--json", "-j", help="Output as JSON"
+    ),
+):
+    """
+    Check CSM operator health status - penalties, strikes, and risks.
+
+    Examples:
+        csm health 0xYourAddress
+        csm health 42
+        csm health --id 42 --json
+    """
+    if address is None and operator_id is None:
+        console.print("[red]Error: Must provide either ADDRESS or --id[/red]")
+        raise typer.Exit(1)
+
+    # Parse numeric address as operator ID
+    if address is not None and address.isdigit():
+        operator_id = int(address)
+        address = None
+
+    service = OperatorService(rpc_url)
+
+    if not output_json:
+        console.print()
+        with console.status("[bold blue]Fetching operator health status..."):
+            if operator_id is not None:
+                rewards = run_async(service.get_operator_by_id(operator_id, True))
+            else:
+                console.print(f"[dim]Looking up operator for address: {address}[/dim]")
+                rewards = run_async(service.get_operator_by_address(address, True))
+    else:
+        if operator_id is not None:
+            rewards = run_async(service.get_operator_by_id(operator_id, True))
+        else:
+            rewards = run_async(service.get_operator_by_address(address, True))
+
+    if rewards is None:
+        if output_json:
+            print(json.dumps({"error": "Operator not found"}, indent=2))
+        else:
+            console.print("[red]No CSM operator found for this address/ID[/red]")
+        raise typer.Exit(1)
+
+    # JSON output
+    if output_json:
+        result = {"operator_id": rewards.node_operator_id}
+        if rewards.health:
+            result["health"] = {
+                "bond_healthy": rewards.health.bond_healthy,
+                "bond_deficit_eth": float(rewards.health.bond_deficit_eth),
+                "stuck_validators_count": rewards.health.stuck_validators_count,
+                "slashed_validators_count": rewards.health.slashed_validators_count,
+                "validators_at_risk_count": rewards.health.validators_at_risk_count,
+                "strikes": {
+                    "total_validators_with_strikes": rewards.health.strikes.total_validators_with_strikes,
+                    "validators_at_risk": rewards.health.strikes.validators_at_risk,
+                    "total_strikes": rewards.health.strikes.total_strikes,
+                },
+                "has_issues": rewards.health.has_issues,
+            }
+        print(json.dumps(result, indent=2))
+        return
+
+    # Rich output
+    console.print(
+        Panel(
+            f"[bold]CSM Operator #{rewards.node_operator_id} Health Status[/bold]",
+            title="Health Check",
+        )
+    )
+
+    if not rewards.health:
+        console.print("[yellow]Health status not available[/yellow]")
+        return
+
+    health = rewards.health
+
+    # Build health status panel content
+    lines = []
+
+    # Bond status
+    if health.bond_healthy:
+        lines.append(f"Bond:           [green]HEALTHY[/green] (excess: {rewards.excess_bond_eth:.4f} ETH)")
+    else:
+        lines.append(f"Bond:           [red bold]DEFICIT -{health.bond_deficit_eth:.4f} ETH[/red bold]")
+
+    # Stuck validators
+    if health.stuck_validators_count == 0:
+        lines.append("Stuck:          [green]0 validators[/green]")
+    else:
+        lines.append(f"Stuck:          [red bold]{health.stuck_validators_count} validators[/red bold] (exit within 4 days!)")
+
+    # Slashed
+    if health.slashed_validators_count == 0:
+        lines.append("Slashed:        [green]0 validators[/green]")
+    else:
+        lines.append(f"Slashed:        [red bold]{health.slashed_validators_count} validators[/red bold]")
+
+    # At risk
+    if health.validators_at_risk_count == 0:
+        lines.append("At Risk:        [green]0 validators[/green] (<32 ETH balance)")
+    else:
+        lines.append(f"At Risk:        [yellow]{health.validators_at_risk_count} validators[/yellow] (<32 ETH balance)")
+
+    # Strikes
+    strikes = health.strikes
+    if strikes.total_validators_with_strikes == 0:
+        lines.append("Strikes:        [green]0 validators[/green]")
+    else:
+        # Build strike status message
+        strike_parts = []
+        if strikes.validators_at_risk > 0:
+            strike_parts.append(f"{strikes.validators_at_risk} at ejection")
+        if strikes.validators_near_ejection > 0:
+            strike_parts.append(f"{strikes.validators_near_ejection} near ejection")
+
+        strike_status = ", ".join(strike_parts) if strike_parts else "monitoring"
+        strike_style = "red bold" if strikes.validators_at_risk > 0 else (
+            "bright_yellow" if strikes.validators_near_ejection > 0 else "yellow"
+        )
+        lines.append(
+            f"Strikes:        [{strike_style}]{strikes.total_validators_with_strikes} validators[/{strike_style}] "
+            f"({strike_status})"
+        )
+
+    lines.append("")
+
+    # Overall status - color-coded by severity
+    if not health.has_issues:
+        lines.append("[bold green]Overall:        No issues detected[/bold green]")
+    elif (
+        not health.bond_healthy
+        or health.stuck_validators_count > 0
+        or health.slashed_validators_count > 0
+        or health.validators_at_risk_count > 0
+        or strikes.max_strikes >= 3
+    ):
+        # Critical issues (red)
+        lines.append("[bold red]Overall:        Issues detected - action required![/bold red]")
+    elif strikes.max_strikes == 2:
+        # Warning level 2 (orange/bright yellow)
+        lines.append("[bold bright_yellow]Overall:        Warning - 2 strikes detected[/bold bright_yellow]")
+    else:
+        # Warning level 1 (yellow)
+        lines.append("[bold yellow]Overall:        Warning - strikes detected[/bold yellow]")
+
+    console.print(Panel("\n".join(lines), title="Status"))
+
+    # Show detailed strikes if any
+    if strikes.total_validators_with_strikes > 0:
+        console.print()
+        console.print("[bold]Validator Strikes Detail:[/bold]")
+        validator_strikes = run_async(service.get_operator_strikes(rewards.node_operator_id))
+        for vs in validator_strikes:
+            strike_display = f"{vs.strike_count}/3"
+            if vs.at_ejection_risk:
+                console.print(f"  {vs.pubkey}: [red bold]{strike_display}[/red bold] (EJECTION RISK!)")
+            elif vs.strike_count > 0:
+                console.print(f"  {vs.pubkey}: [yellow]{strike_display}[/yellow]")
+            else:
+                console.print(f"  {vs.pubkey}: [green]{strike_display}[/green]")
 
 
 @app.command()

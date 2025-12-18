@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     csmodule_address: str = "0xdA7dE2ECdDfccC6c3AF10108Db212ACBBf9EA83F"
     csaccounting_address: str = "0x4d72BFF1BeaC69925F8Bd12526a39BAAb069e5Da"
     csfeedistributor_address: str = "0xD99CC66fEC647E68294C6477B40fC7E0F6F618D0"
+    csstrikes_address: str = "0xaa328816027F2D32B9F56d190BC9Fa4A5C07637f"
     steth_address: str = "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"
 
     class Config:

@@ -2,18 +2,21 @@
 
 from decimal import Decimal
 
-from ..core.types import APYMetrics, OperatorRewards
+from ..core.types import APYMetrics, BondSummary, HealthStatus, OperatorRewards, StrikeSummary
 from ..data.beacon import (
     BeaconDataProvider,
     ValidatorInfo,
     aggregate_validator_status,
     calculate_avg_effectiveness,
+    count_at_risk_validators,
+    count_slashed_validators,
     get_earliest_activation,
 )
 from ..data.ipfs_logs import IPFSLogProvider
 from ..data.lido_api import LidoAPIProvider
 from ..data.onchain import OnChainDataProvider
 from ..data.rewards_tree import RewardsTreeProvider
+from ..data.strikes import StrikesProvider
 
 
 class OperatorService:
@@ -25,6 +28,7 @@ class OperatorService:
         self.beacon = BeaconDataProvider()
         self.lido_api = LidoAPIProvider()
         self.ipfs_logs = IPFSLogProvider()
+        self.strikes = StrikesProvider(rpc_url)
 
     async def get_operator_by_address(
         self, address: str, include_validators: bool = False
@@ -82,6 +86,7 @@ class OperatorService:
         avg_effectiveness: float | None = None
         apy_metrics: APYMetrics | None = None
         active_since = None
+        health_status: HealthStatus | None = None
 
         if include_validators and operator.total_deposited_keys > 0:
             # Get validator pubkeys
@@ -98,6 +103,14 @@ class OperatorService:
             apy_metrics = await self.calculate_apy_metrics(
                 operator_id=operator_id,
                 bond_eth=bond.current_bond_eth,
+            )
+
+            # Step 10: Calculate health status
+            health_status = await self.calculate_health_status(
+                operator_id=operator_id,
+                bond=bond,
+                stuck_validators_count=operator.stuck_validators_count,
+                validator_details=validator_details,
             )
 
         return OperatorRewards(
@@ -122,6 +135,7 @@ class OperatorService:
             avg_effectiveness=avg_effectiveness,
             apy=apy_metrics,
             active_since=active_since,
+            health=health_status,
         )
 
     async def get_all_operators_with_rewards(self) -> list[int]:
@@ -192,3 +206,50 @@ class OperatorService:
             net_apy_28d=net_apy_28d,
             net_apy_ltd=net_apy_ltd,
         )
+
+    async def calculate_health_status(
+        self,
+        operator_id: int,
+        bond: BondSummary,
+        stuck_validators_count: int,
+        validator_details: list[ValidatorInfo],
+    ) -> HealthStatus:
+        """Calculate health status for an operator.
+
+        Includes bond health, stuck validators, slashing, at-risk validators, and strikes.
+        """
+        # Bond health
+        bond_healthy = bond.current_bond_eth >= bond.required_bond_eth
+        bond_deficit = max(Decimal(0), bond.required_bond_eth - bond.current_bond_eth)
+
+        # Count slashed and at-risk validators
+        slashed_count = count_slashed_validators(validator_details)
+        at_risk_count = count_at_risk_validators(validator_details)
+
+        # Get strikes data
+        strike_summary = StrikeSummary()
+        try:
+            summary = await self.strikes.get_operator_strike_summary(operator_id)
+            strike_summary = StrikeSummary(
+                total_validators_with_strikes=summary["total_validators_with_strikes"],
+                validators_at_risk=summary["validators_at_risk"],
+                validators_near_ejection=summary["validators_near_ejection"],
+                total_strikes=summary["total_strikes"],
+                max_strikes=summary["max_strikes"],
+            )
+        except Exception:
+            # If strikes fetch fails, continue with empty summary
+            pass
+
+        return HealthStatus(
+            bond_healthy=bond_healthy,
+            bond_deficit_eth=bond_deficit,
+            stuck_validators_count=stuck_validators_count,
+            slashed_validators_count=slashed_count,
+            validators_at_risk_count=at_risk_count,
+            strikes=strike_summary,
+        )
+
+    async def get_operator_strikes(self, operator_id: int):
+        """Get detailed strikes for an operator's validators."""
+        return await self.strikes.get_operator_strikes(operator_id)

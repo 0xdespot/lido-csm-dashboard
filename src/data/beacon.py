@@ -121,6 +121,20 @@ class ValidatorInfo:
         """Balance in ETH."""
         return Decimal(self.balance_gwei) / Decimal(10**9)
 
+    @property
+    def at_risk(self) -> bool:
+        """
+        Check if validator is at risk due to low balance.
+
+        A validator with effective balance < 32 ETH may face withdrawal penalties
+        when exiting, as the difference will be confiscated from the operator's bond.
+        """
+        # Only active validators can be "at risk" in this sense
+        if not self.status.is_active:
+            return False
+        # 32 ETH = 32_000_000_000 gwei
+        return self.balance_gwei < 32_000_000_000
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -132,6 +146,7 @@ class ValidatorInfo:
             "effectiveness": self.effectiveness,
             "activation_epoch": self.activation_epoch,
             "exit_epoch": self.exit_epoch,
+            "at_risk": self.at_risk,
         }
 
 
@@ -340,3 +355,16 @@ def calculate_avg_effectiveness(validators: list[ValidatorInfo]) -> float | None
 
     total = sum(v.effectiveness for v in active_with_effectiveness)
     return total / len(active_with_effectiveness)
+
+
+def count_at_risk_validators(validators: list[ValidatorInfo]) -> int:
+    """Count validators with balance < 32 ETH (at risk of withdrawal penalty)."""
+    return sum(1 for v in validators if v.at_risk)
+
+
+def count_slashed_validators(validators: list[ValidatorInfo]) -> int:
+    """Count slashed validators."""
+    return sum(
+        1 for v in validators
+        if v.status in (ValidatorStatus.ACTIVE_SLASHED, ValidatorStatus.EXITED_SLASHED)
+    )

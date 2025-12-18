@@ -82,6 +82,24 @@ async def get_operator(
     if rewards.active_since:
         result["active_since"] = rewards.active_since.isoformat()
 
+    # Add health status if available
+    if rewards.health:
+        result["health"] = {
+            "bond_healthy": rewards.health.bond_healthy,
+            "bond_deficit_eth": float(rewards.health.bond_deficit_eth),
+            "stuck_validators_count": rewards.health.stuck_validators_count,
+            "slashed_validators_count": rewards.health.slashed_validators_count,
+            "validators_at_risk_count": rewards.health.validators_at_risk_count,
+            "strikes": {
+                "total_validators_with_strikes": rewards.health.strikes.total_validators_with_strikes,
+                "validators_at_risk": rewards.health.strikes.validators_at_risk,
+                "validators_near_ejection": rewards.health.strikes.validators_near_ejection,
+                "total_strikes": rewards.health.strikes.total_strikes,
+                "max_strikes": rewards.health.strikes.max_strikes,
+            },
+            "has_issues": rewards.health.has_issues,
+        }
+
     return result
 
 
@@ -91,6 +109,36 @@ async def list_operators():
     service = OperatorService()
     operator_ids = await service.get_all_operators_with_rewards()
     return {"count": len(operator_ids), "operator_ids": operator_ids}
+
+
+@router.get("/operator/{identifier}/strikes")
+async def get_operator_strikes(identifier: str):
+    """Get detailed strikes for an operator's validators."""
+    service = OperatorService()
+
+    # Determine if this is an ID or address
+    if identifier.isdigit():
+        operator_id = int(identifier)
+    elif identifier.startswith("0x"):
+        operator_id = await service.onchain.find_operator_by_address(identifier)
+        if operator_id is None:
+            raise HTTPException(status_code=404, detail="Operator not found")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid identifier format")
+
+    strikes = await service.get_operator_strikes(operator_id)
+    return {
+        "operator_id": operator_id,
+        "validators": [
+            {
+                "pubkey": s.pubkey,
+                "strike_count": s.strike_count,
+                "strikes": s.strikes,
+                "at_ejection_risk": s.at_ejection_risk,
+            }
+            for s in strikes
+        ],
+    }
 
 
 @router.get("/health")

@@ -92,6 +92,81 @@ def create_app() -> FastAPI:
                 </div>
             </div>
 
+            <div id="validator-status" class="hidden mb-6 bg-gray-800 rounded-lg p-6">
+                <h3 class="text-lg font-bold mb-4">Validator Status (Beacon Chain)</h3>
+                <div class="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
+                    <div class="bg-green-900/50 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-green-400" id="status-active">0</div>
+                        <div class="text-xs text-gray-400">Active</div>
+                    </div>
+                    <div class="bg-yellow-900/50 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-yellow-400" id="status-pending">0</div>
+                        <div class="text-xs text-gray-400">Pending</div>
+                    </div>
+                    <div class="bg-yellow-900/50 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-yellow-400" id="status-exiting">0</div>
+                        <div class="text-xs text-gray-400">Exiting</div>
+                    </div>
+                    <div class="bg-gray-700 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-gray-400" id="status-exited">0</div>
+                        <div class="text-xs text-gray-400">Exited</div>
+                    </div>
+                    <div class="bg-red-900/50 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-red-400" id="status-slashed">0</div>
+                        <div class="text-xs text-gray-400">Slashed</div>
+                    </div>
+                    <div class="bg-gray-700 rounded-lg p-3 text-center">
+                        <div class="text-xl font-bold text-gray-500" id="status-unknown">0</div>
+                        <div class="text-xs text-gray-400">Unknown</div>
+                    </div>
+                </div>
+                <div id="effectiveness-section" class="hidden border-t border-gray-700 pt-4 mt-4">
+                    <div class="flex items-center justify-between">
+                        <span class="text-gray-400">Average Attestation Effectiveness</span>
+                        <span class="text-xl font-bold text-green-400"><span id="avg-effectiveness">--</span>%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="health-section" class="hidden mb-6 bg-gray-800 rounded-lg p-6">
+                <h3 class="text-lg font-bold mb-4">Health Status</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400">Bond</span>
+                        <span id="health-bond" class="font-medium">--</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400">Stuck Validators</span>
+                        <span id="health-stuck" class="font-medium">--</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400">Slashed</span>
+                        <span id="health-slashed" class="font-medium">--</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400">At Risk (&lt;32 ETH)</span>
+                        <span id="health-at-risk" class="font-medium">--</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400">Performance Strikes</span>
+                        <span id="health-strikes" class="font-medium">--</span>
+                    </div>
+                    <div id="strikes-detail" class="hidden">
+                        <button id="toggle-strikes" class="text-sm text-purple-400 hover:text-purple-300 mt-1 mb-2">
+                            Show validator details ▼
+                        </button>
+                        <div id="strikes-list" class="hidden pl-4 border-l-2 border-gray-600 space-y-1 text-sm font-mono max-h-64 overflow-y-auto">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                    </div>
+                    <hr class="border-gray-700">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold">Overall</span>
+                        <span id="health-overall" class="font-bold">--</span>
+                    </div>
+                </div>
+            </div>
+
             <div class="bg-gray-800 rounded-lg p-6">
                 <h3 class="text-lg font-bold mb-4">Earnings Summary</h3>
                 <div class="space-y-3">
@@ -142,42 +217,6 @@ def create_app() -> FastAPI:
                 </div>
             </div>
 
-            <div id="validator-status" class="hidden mt-6 bg-gray-800 rounded-lg p-6">
-                <h3 class="text-lg font-bold mb-4">Validator Status (Beacon Chain)</h3>
-                <div class="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
-                    <div class="bg-green-900/50 rounded-lg p-3 text-center">
-                        <div class="text-xl font-bold text-green-400" id="status-active">0</div>
-                        <div class="text-xs text-gray-400">Active</div>
-                    </div>
-                    <div class="bg-yellow-900/50 rounded-lg p-3 text-center">
-                        <div class="text-xl font-bold text-yellow-400" id="status-pending">0</div>
-                        <div class="text-xs text-gray-400">Pending</div>
-                    </div>
-                    <div class="bg-yellow-900/50 rounded-lg p-3 text-center">
-                        <div class="text-xl font-bold text-yellow-400" id="status-exiting">0</div>
-                        <div class="text-xs text-gray-400">Exiting</div>
-                    </div>
-                    <div class="bg-gray-700 rounded-lg p-3 text-center">
-                        <div class="text-xl font-bold text-gray-400" id="status-exited">0</div>
-                        <div class="text-xs text-gray-400">Exited</div>
-                    </div>
-                    <div class="bg-red-900/50 rounded-lg p-3 text-center">
-                        <div class="text-xl font-bold text-red-400" id="status-slashed">0</div>
-                        <div class="text-xs text-gray-400">Slashed</div>
-                    </div>
-                    <div class="bg-gray-700 rounded-lg p-3 text-center">
-                        <div class="text-xl font-bold text-gray-500" id="status-unknown">0</div>
-                        <div class="text-xs text-gray-400">Unknown</div>
-                    </div>
-                </div>
-                <div id="effectiveness-section" class="hidden border-t border-gray-700 pt-4 mt-4">
-                    <div class="flex items-center justify-between">
-                        <span class="text-gray-400">Average Attestation Effectiveness</span>
-                        <span class="text-xl font-bold text-green-400"><span id="avg-effectiveness">--</span>%</span>
-                    </div>
-                </div>
-            </div>
-
             <div id="apy-section" class="hidden mt-6 bg-gray-800 rounded-lg p-6">
                 <h3 class="text-lg font-bold mb-4">APY Metrics (Historical)</h3>
                 <div class="overflow-x-auto">
@@ -223,6 +262,7 @@ def create_app() -> FastAPI:
         const detailsLoading = document.getElementById('details-loading');
         const validatorStatus = document.getElementById('validator-status');
         const apySection = document.getElementById('apy-section');
+        const healthSection = document.getElementById('health-section');
 
         function formatApy(val) {
             return val !== null && val !== undefined ? val.toFixed(2) + '%' : '--%';
@@ -240,6 +280,7 @@ def create_app() -> FastAPI:
             results.classList.add('hidden');
             validatorStatus.classList.add('hidden');
             apySection.classList.add('hidden');
+            healthSection.classList.add('hidden');
             document.getElementById('active-since-row').classList.add('hidden');
             loadDetailsBtn.classList.remove('hidden');
             loadDetailsBtn.disabled = false;
@@ -341,6 +382,119 @@ def create_app() -> FastAPI:
                     const options = { year: 'numeric', month: 'short', day: 'numeric' };
                     document.getElementById('active-since').textContent = activeSince.toLocaleDateString('en-US', options);
                     document.getElementById('active-since-row').classList.remove('hidden');
+                }
+
+                // Populate health status if available
+                if (data.health) {
+                    const h = data.health;
+
+                    // Bond health
+                    if (h.bond_healthy) {
+                        document.getElementById('health-bond').innerHTML = '<span class="text-green-400">HEALTHY</span>';
+                    } else {
+                        document.getElementById('health-bond').innerHTML = `<span class="text-red-400">DEFICIT -${h.bond_deficit_eth.toFixed(4)} ETH</span>`;
+                    }
+
+                    // Stuck validators
+                    if (h.stuck_validators_count === 0) {
+                        document.getElementById('health-stuck').innerHTML = '<span class="text-green-400">0</span>';
+                    } else {
+                        document.getElementById('health-stuck').innerHTML = `<span class="text-red-400">${h.stuck_validators_count} (exit within 4 days!)</span>`;
+                    }
+
+                    // Slashed
+                    if (h.slashed_validators_count === 0) {
+                        document.getElementById('health-slashed').innerHTML = '<span class="text-green-400">0</span>';
+                    } else {
+                        document.getElementById('health-slashed').innerHTML = `<span class="text-red-400">${h.slashed_validators_count}</span>`;
+                    }
+
+                    // At risk
+                    if (h.validators_at_risk_count === 0) {
+                        document.getElementById('health-at-risk').innerHTML = '<span class="text-green-400">0</span>';
+                    } else {
+                        document.getElementById('health-at-risk').innerHTML = `<span class="text-yellow-400">${h.validators_at_risk_count}</span>`;
+                    }
+
+                    // Strikes
+                    const strikesDetailDiv = document.getElementById('strikes-detail');
+                    const toggleStrikesBtn = document.getElementById('toggle-strikes');
+                    const strikesList = document.getElementById('strikes-list');
+
+                    if (h.strikes.total_validators_with_strikes === 0) {
+                        document.getElementById('health-strikes').innerHTML = '<span class="text-green-400">0 validators</span>';
+                        strikesDetailDiv.classList.add('hidden');
+                    } else {
+                        // Build strike status message
+                        const strikeParts = [];
+                        if (h.strikes.validators_at_risk > 0) {
+                            strikeParts.push(`${h.strikes.validators_at_risk} at ejection`);
+                        }
+                        if (h.strikes.validators_near_ejection > 0) {
+                            strikeParts.push(`${h.strikes.validators_near_ejection} near ejection`);
+                        }
+                        const strikeStatus = strikeParts.length > 0 ? strikeParts.join(', ') : 'monitoring';
+                        const strikeColor = h.strikes.validators_at_risk > 0 ? 'text-red-400' :
+                            (h.strikes.validators_near_ejection > 0 ? 'text-orange-400' : 'text-yellow-400');
+                        document.getElementById('health-strikes').innerHTML =
+                            `<span class="${strikeColor}">${h.strikes.total_validators_with_strikes} validators (${strikeStatus})</span>`;
+
+                        // Show the toggle button for strikes detail
+                        strikesDetailDiv.classList.remove('hidden');
+                        let strikesLoaded = false;
+
+                        toggleStrikesBtn.onclick = async () => {
+                            if (strikesList.classList.contains('hidden')) {
+                                // Expand - fetch data if not loaded
+                                if (!strikesLoaded) {
+                                    strikesList.innerHTML = '<div class="text-gray-400">Loading...</div>';
+                                    strikesList.classList.remove('hidden');
+                                    try {
+                                        const opId = document.getElementById('operator-id').textContent;
+                                        const strikesResp = await fetch(`/api/operator/${opId}/strikes`);
+                                        const strikesData = await strikesResp.json();
+                                        strikesList.innerHTML = strikesData.validators.map(v => {
+                                            const colorClass = v.at_ejection_risk ? 'text-red-400' :
+                                                (v.strike_count === 2 ? 'text-orange-400' : 'text-yellow-400');
+                                            return `<div class="${colorClass}">${v.pubkey}: ${v.strike_count}/3</div>`;
+                                        }).join('');
+                                        strikesLoaded = true;
+                                    } catch (err) {
+                                        strikesList.innerHTML = '<div class="text-red-400">Failed to load strikes</div>';
+                                    }
+                                } else {
+                                    strikesList.classList.remove('hidden');
+                                }
+                                toggleStrikesBtn.textContent = 'Hide validator details ▲';
+                            } else {
+                                // Collapse
+                                strikesList.classList.add('hidden');
+                                toggleStrikesBtn.textContent = 'Show validator details ▼';
+                            }
+                        };
+                    }
+
+                    // Overall - color-coded by severity
+                    if (!h.has_issues) {
+                        document.getElementById('health-overall').innerHTML = '<span class="text-green-400">No issues detected</span>';
+                    } else if (
+                        !h.bond_healthy ||
+                        h.stuck_validators_count > 0 ||
+                        h.slashed_validators_count > 0 ||
+                        h.validators_at_risk_count > 0 ||
+                        h.strikes.max_strikes >= 3
+                    ) {
+                        // Critical issues (red)
+                        document.getElementById('health-overall').innerHTML = '<span class="text-red-400">Issues detected - action required!</span>';
+                    } else if (h.strikes.max_strikes === 2) {
+                        // Warning level 2 (orange)
+                        document.getElementById('health-overall').innerHTML = '<span class="text-orange-400">Warning - 2 strikes detected</span>';
+                    } else {
+                        // Warning level 1 (yellow)
+                        document.getElementById('health-overall').innerHTML = '<span class="text-yellow-400">Warning - strikes detected</span>';
+                    }
+
+                    healthSection.classList.remove('hidden');
                 }
             } catch (err) {
                 detailsLoading.classList.add('hidden');
