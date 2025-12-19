@@ -75,16 +75,16 @@ The web dashboard runs automatically when you start the container. You can also 
 
 ```bash
 # Check operator rewards
-docker compose exec csm-dashboard csm check 0xYourAddress
+docker compose exec csm-dashboard csm rewards 0xYourAddress
 
 # Check by operator ID
-docker compose exec csm-dashboard csm check --id 42
+docker compose exec csm-dashboard csm rewards --id 42
 
 # Get detailed info with APY metrics
-docker compose exec csm-dashboard csm check --id 42 --detailed
+docker compose exec csm-dashboard csm rewards --id 42 --detailed
 
 # JSON output
-docker compose exec csm-dashboard csm check --id 42 --json
+docker compose exec csm-dashboard csm rewards --id 42 --json
 
 # List all operators
 docker compose exec csm-dashboard csm list
@@ -95,11 +95,13 @@ docker compose exec csm-dashboard csm watch 0xYourAddress --interval 60
 
 ### Local CLI Usage
 
-### `csm check` - Check operator rewards
+### `csm rewards` - Check operator rewards
 
 ```bash
-csm check [ADDRESS] [OPTIONS]
+csm rewards [ADDRESS] [OPTIONS]
 ```
+
+> **Note:** The `check` command is still available as an alias for backwards compatibility.
 
 | Argument/Option | Short | Description |
 |-----------------|-------|-------------|
@@ -113,19 +115,19 @@ csm check [ADDRESS] [OPTIONS]
 
 ```bash
 # Check by address
-csm check 0xYourAddress
+csm rewards 0xYourAddress
 
 # Check by operator ID (faster)
-csm check --id 42
+csm rewards --id 42
 
 # Get detailed validator info and APY
-csm check --id 42 --detailed
+csm rewards --id 42 --detailed
 
 # JSON output for scripting
-csm check --id 42 --json
+csm rewards --id 42 --json
 
 # JSON with detailed info
-csm check --id 42 --detailed --json
+csm rewards --id 42 --detailed --json
 ```
 
 ### `csm watch` - Continuous monitoring
@@ -196,7 +198,7 @@ Then open http://localhost:8080 in your browser.
 The `--json` flag outputs data in the same format as the API, making it easy to integrate with scripts or other tools:
 
 ```bash
-csm check --id 333 --json
+csm rewards --id 333 --json
 ```
 
 ```json

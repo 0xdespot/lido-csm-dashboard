@@ -97,8 +97,9 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
     return result
 
 
-@app.command()
-def check(
+@app.command("rewards")
+@app.command("check", hidden=True)
+def rewards(
     address: Optional[str] = typer.Argument(
         None, help="Ethereum address (required unless --id is provided)"
     ),
@@ -119,10 +120,10 @@ def check(
     Check CSM operator rewards and earnings.
 
     Examples:
-        csm check 0xYourAddress
-        csm check 42
-        csm check 0xYourAddress --json
-        csm check 42 --detailed
+        csm rewards 0xYourAddress
+        csm rewards 42
+        csm rewards 0xYourAddress --json
+        csm rewards 42 --detailed
     """
     if address is None and operator_id is None:
         console.print("[red]Error: Must provide either ADDRESS or --id[/red]")
@@ -592,7 +593,7 @@ def watch(
         while True:
             console.clear()
             try:
-                check(address, rpc_url=rpc_url)
+                rewards(address, rpc_url=rpc_url)
             except Exception as e:
                 console.print(f"[red]Error: {e}[/red]")
             console.print(
