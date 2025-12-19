@@ -30,9 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 
-# Copy application code and ABIs
+# Copy application code (includes abis inside src/)
 COPY src ./src
-COPY abis ./abis
 
 # Create csm alias script
 RUN echo '#!/bin/sh\npython -m src.main "$@"' > /usr/local/bin/csm && \

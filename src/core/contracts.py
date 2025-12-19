@@ -1,15 +1,14 @@
 """Contract ABIs and helpers."""
 
 import json
-from pathlib import Path
+from importlib import resources
 from typing import Any
 
 
 def load_abi(name: str) -> list[dict[str, Any]]:
     """Load ABI from JSON file in abis directory."""
-    abi_path = Path(__file__).parent.parent.parent / "abis" / f"{name}.json"
-    with open(abi_path) as f:
-        return json.load(f)
+    abi_file = resources.files("src.abis").joinpath(f"{name}.json")
+    return json.loads(abi_file.read_text())
 
 
 # Load ABIs at module level for easy import
