@@ -76,3 +76,63 @@ class EtherscanProvider:
                         continue
 
             return sorted(results, key=lambda x: x["block"])
+
+    async def get_transfer_events(
+        self,
+        token_address: str,
+        from_address: str,
+        to_address: str,
+        from_block: int,
+        to_block: str | int = "latest",
+    ) -> list[dict]:
+        """Query Transfer events from Etherscan for a specific from/to pair."""
+        if not self.api_key:
+            return []
+
+        # Event topic: keccak256("Transfer(address,address,uint256)")
+        topic0 = "0x" + Web3.keccak(text="Transfer(address,address,uint256)").hex()
+        # topic1 is indexed 'from' address (padded to 32 bytes)
+        topic1 = "0x" + from_address.lower().replace("0x", "").zfill(64)
+        # topic2 is indexed 'to' address (padded to 32 bytes)
+        topic2 = "0x" + to_address.lower().replace("0x", "").zfill(64)
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                self.BASE_URL,
+                params={
+                    "chainid": 1,
+                    "module": "logs",
+                    "action": "getLogs",
+                    "address": token_address,
+                    "topic0": topic0,
+                    "topic1": topic1,
+                    "topic2": topic2,
+                    "topic0_1_opr": "and",
+                    "topic1_2_opr": "and",
+                    "fromBlock": from_block,
+                    "toBlock": to_block,
+                    "apikey": self.api_key,
+                },
+            )
+
+            data = response.json()
+            if data.get("status") != "1":
+                return []
+
+            results = []
+            for log in data.get("result", []):
+                # The data field contains the non-indexed value (amount)
+                raw_data = log["data"]
+                try:
+                    value = int(raw_data, 16)
+                    results.append(
+                        {
+                            "block": int(log["blockNumber"], 16),
+                            "tx_hash": log["transactionHash"],
+                            "value": value,
+                        }
+                    )
+                except (ValueError, TypeError):
+                    continue
+
+            return sorted(results, key=lambda x: x["block"])
