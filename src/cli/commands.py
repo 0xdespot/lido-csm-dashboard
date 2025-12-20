@@ -440,21 +440,24 @@ def rewards(
         if history and rewards.apy.frames:
             from datetime import datetime
             history_table = Table(title="Distribution History")
-            history_table.add_column("Frame", style="cyan", justify="right")
+            history_table.add_column("#", style="cyan", justify="right")
             history_table.add_column("Distribution Date", style="white")
             history_table.add_column("Rewards (ETH)", style="green", justify="right")
             history_table.add_column("Duration", style="dim", justify="right")
             history_table.add_column("APY", style="green", justify="right")
 
-            for frame in rewards.apy.frames:
+            # Display newest first (reverse order), with row numbers counting down
+            total_frames = len(rewards.apy.frames)
+            for idx, frame in enumerate(reversed(rewards.apy.frames)):
                 try:
                     end_dt = datetime.fromisoformat(frame.end_date)
                     dist_date = end_dt.strftime("%b %d, %Y")
                 except (ValueError, TypeError):
                     dist_date = frame.end_date
 
+                row_num = total_frames - idx  # Count down: newest is highest number
                 history_table.add_row(
-                    str(frame.frame_number),
+                    str(row_num),
                     dist_date,
                     f"{frame.rewards_eth:.4f}",
                     f"{frame.duration_days:.1f} days",
