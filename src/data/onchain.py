@@ -256,3 +256,118 @@ class OnChainDataProvider:
                 return []
 
         return sorted(all_events, key=lambda x: x["block"])
+
+    @cached(ttl=3600)  # Cache for 1 hour
+    async def get_withdrawal_history(
+        self, reward_address: str, start_block: int | None = None
+    ) -> list[dict]:
+        """
+        Get withdrawal history for an operator's reward address.
+
+        Queries stETH Transfer events from CSFeeDistributor to the reward address.
+        These represent when the operator claimed their rewards.
+
+        Args:
+            reward_address: The operator's reward address
+            start_block: Starting block number (default: CSM deployment ~20873000)
+
+        Returns:
+            List of withdrawal events with block, tx_hash, shares, and timestamp
+        """
+        if start_block is None:
+            start_block = 20873000  # CSM deployment block
+
+        reward_address = Web3.to_checksum_address(reward_address)
+        csfeedistributor_address = self.settings.csfeedistributor_address
+
+        # 1. Try Etherscan API first (most reliable)
+        etherscan = EtherscanProvider()
+        if etherscan.is_available():
+            events = await etherscan.get_transfer_events(
+                token_address=self.settings.steth_address,
+                from_address=csfeedistributor_address,
+                to_address=reward_address,
+                from_block=start_block,
+            )
+            if events:
+                # Enrich with block timestamps
+                return await self._enrich_withdrawal_events(events)
+
+        # 2. Try chunked RPC queries
+        events = await self._query_transfer_events_chunked(
+            csfeedistributor_address, reward_address, start_block
+        )
+        if events:
+            return await self._enrich_withdrawal_events(events)
+
+        return []
+
+    async def _query_transfer_events_chunked(
+        self,
+        from_address: str,
+        to_address: str,
+        start_block: int,
+        chunk_size: int = 10000,
+    ) -> list[dict]:
+        """Query Transfer events in smaller chunks."""
+        current_block = self.w3.eth.block_number
+        all_events = []
+
+        from_address = Web3.to_checksum_address(from_address)
+        to_address = Web3.to_checksum_address(to_address)
+
+        for from_blk in range(start_block, current_block, chunk_size):
+            to_blk = min(from_blk + chunk_size - 1, current_block)
+            try:
+                events = self.steth.events.Transfer.get_logs(
+                    from_block=from_blk,
+                    to_block=to_blk,
+                    argument_filters={
+                        "from": from_address,
+                        "to": to_address,
+                    },
+                )
+                for e in events:
+                    all_events.append(
+                        {
+                            "block": e["blockNumber"],
+                            "tx_hash": e["transactionHash"].hex(),
+                            "value": e["args"]["value"],
+                        }
+                    )
+            except Exception:
+                # If chunked queries fail, give up on this method
+                return []
+
+        return sorted(all_events, key=lambda x: x["block"])
+
+    async def _enrich_withdrawal_events(self, events: list[dict]) -> list[dict]:
+        """Add timestamps and ETH values to withdrawal events."""
+        from datetime import datetime, timezone
+
+        enriched = []
+        for event in events:
+            try:
+                # Get block timestamp
+                block = self.w3.eth.get_block(event["block"])
+                timestamp = datetime.fromtimestamp(
+                    block["timestamp"], tz=timezone.utc
+                ).isoformat()
+
+                # Convert shares to ETH (using current rate as approximation)
+                eth_value = await self.shares_to_eth(event["value"])
+
+                enriched.append(
+                    {
+                        "block_number": event["block"],
+                        "timestamp": timestamp,
+                        "shares": event["value"],
+                        "eth_value": float(eth_value),
+                        "tx_hash": event["tx_hash"],
+                    }
+                )
+            except Exception:
+                # Skip events we can't enrich
+                continue
+
+        return enriched
