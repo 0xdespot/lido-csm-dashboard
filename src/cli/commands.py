@@ -65,12 +65,34 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
     # Add APY metrics if available
     if rewards.apy:
         result["apy"] = {
+            "previous_distribution_eth": rewards.apy.previous_distribution_eth,
+            "previous_distribution_apy": rewards.apy.previous_distribution_apy,
+            "previous_net_apy": rewards.apy.previous_net_apy,
+            "current_distribution_eth": rewards.apy.current_distribution_eth,
+            "current_distribution_apy": rewards.apy.current_distribution_apy,
+            "lifetime_distribution_eth": rewards.apy.lifetime_distribution_eth,
+            "next_distribution_date": rewards.apy.next_distribution_date,
+            "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
             "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
             "historical_reward_apy_ltd": rewards.apy.historical_reward_apy_ltd,
             "bond_apy": rewards.apy.bond_apy,
             "net_apy_28d": rewards.apy.net_apy_28d,
             "net_apy_ltd": rewards.apy.net_apy_ltd,
         }
+        # Add frames if available (from --history flag)
+        if rewards.apy.frames:
+            result["apy"]["frames"] = [
+                {
+                    "frame_number": f.frame_number,
+                    "start_date": f.start_date,
+                    "end_date": f.end_date,
+                    "rewards_eth": f.rewards_eth,
+                    "rewards_shares": f.rewards_shares,
+                    "duration_days": f.duration_days,
+                    "apy": f.apy,
+                }
+                for f in rewards.apy.frames
+            ]
 
     # Add active_since if available
     if rewards.active_since:
@@ -115,6 +137,9 @@ def rewards(
     detailed: bool = typer.Option(
         False, "--detailed", "-d", help="Include validator status from beacon chain"
     ),
+    history: bool = typer.Option(
+        False, "--history", "-H", help="Show all historical distribution frames"
+    ),
 ):
     """
     Check CSM operator rewards and earnings.
@@ -124,6 +149,7 @@ def rewards(
         csm rewards 42
         csm rewards 0xYourAddress --json
         csm rewards 42 --detailed
+        csm rewards 42 --history
     """
     if address is None and operator_id is None:
         console.print("[red]Error: Must provide either ADDRESS or --id[/red]")
@@ -139,20 +165,20 @@ def rewards(
     if not output_json:
         console.print()
         status_msg = "[bold blue]Fetching operator data..."
-        if detailed:
+        if detailed or history:
             status_msg = "[bold blue]Fetching operator data and validator status..."
         with console.status(status_msg):
             if operator_id is not None:
-                rewards = run_async(service.get_operator_by_id(operator_id, detailed))
+                rewards = run_async(service.get_operator_by_id(operator_id, detailed or history, history))
             else:
                 console.print(f"[dim]Looking up operator for address: {address}[/dim]")
-                rewards = run_async(service.get_operator_by_address(address, detailed))
+                rewards = run_async(service.get_operator_by_address(address, detailed or history, history))
     else:
         # JSON mode - no status output
         if operator_id is not None:
-            rewards = run_async(service.get_operator_by_id(operator_id, detailed))
+            rewards = run_async(service.get_operator_by_id(operator_id, detailed or history, history))
         else:
-            rewards = run_async(service.get_operator_by_address(address, detailed))
+            rewards = run_async(service.get_operator_by_address(address, detailed or history, history))
 
     if rewards is None:
         if output_json:
@@ -352,36 +378,91 @@ def rewards(
     console.print(rewards_table)
     console.print()
 
-    # APY Metrics table (only shown with --detailed flag)
-    if detailed and rewards.apy:
+    # APY Metrics table (only shown with --detailed or --history flag)
+    if (detailed or history) and rewards.apy:
         apy_table = Table(title="APY Metrics (Historical)")
         apy_table.add_column("Metric", style="cyan")
-        apy_table.add_column("28-Day", style="green", justify="right")
+        apy_table.add_column("Previous", style="green", justify="right")
+        apy_table.add_column("Current", style="green", justify="right")
         apy_table.add_column("Lifetime", style="green", justify="right")
 
         def fmt_apy(val: float | None) -> str:
             return f"{val:.2f}%" if val is not None else "--"
 
+        def fmt_eth(val: float | None) -> str:
+            return f"{val:.4f}" if val is not None else "--"
+
         apy_table.add_row(
             "Reward APY",
-            fmt_apy(rewards.apy.historical_reward_apy_28d),
+            fmt_apy(rewards.apy.previous_distribution_apy),
+            fmt_apy(rewards.apy.current_distribution_apy),
             fmt_apy(rewards.apy.historical_reward_apy_ltd),
         )
         apy_table.add_row(
             "Bond APY (stETH)*",
             fmt_apy(rewards.apy.bond_apy),
             fmt_apy(rewards.apy.bond_apy),
+            fmt_apy(rewards.apy.bond_apy),
         )
-        apy_table.add_row("", "", "")
         apy_table.add_row(
             "[bold]NET APY[/bold]",
+            f"[bold yellow]{fmt_apy(rewards.apy.previous_net_apy)}[/bold yellow]",
             f"[bold yellow]{fmt_apy(rewards.apy.net_apy_28d)}[/bold yellow]",
             f"[bold yellow]{fmt_apy(rewards.apy.net_apy_ltd)}[/bold yellow]",
         )
+        apy_table.add_row("─" * 15, "─" * 10, "─" * 10, "─" * 10)
+        apy_table.add_row(
+            "Rewards (ETH)",
+            fmt_eth(rewards.apy.previous_distribution_eth),
+            fmt_eth(rewards.apy.current_distribution_eth),
+            fmt_eth(rewards.apy.lifetime_distribution_eth),
+        )
 
         console.print(apy_table)
-        console.print("[dim]*Bond APY uses current stETH rate[/dim]")
+        console.print("[dim]*Bond APY uses current stETH rate (historical rate not tracked)[/dim]")
+
+        # Show next distribution estimate
+        if rewards.apy.next_distribution_date:
+            from datetime import datetime
+            try:
+                next_dt = datetime.fromisoformat(rewards.apy.next_distribution_date)
+                next_date_str = next_dt.strftime("%b %d, %Y")
+                est_eth = rewards.apy.next_distribution_est_eth
+                if est_eth:
+                    console.print(f"\n[cyan]Next Distribution:[/cyan] ~{next_date_str} (est. {est_eth:.4f} ETH)")
+                else:
+                    console.print(f"\n[cyan]Next Distribution:[/cyan] ~{next_date_str}")
+            except (ValueError, TypeError):
+                pass
         console.print()
+
+        # Show full distribution history if --history flag is used
+        if history and rewards.apy.frames:
+            from datetime import datetime
+            history_table = Table(title="Distribution History")
+            history_table.add_column("Frame", style="cyan", justify="right")
+            history_table.add_column("Distribution Date", style="white")
+            history_table.add_column("Rewards (ETH)", style="green", justify="right")
+            history_table.add_column("Duration", style="dim", justify="right")
+            history_table.add_column("APY", style="green", justify="right")
+
+            for frame in rewards.apy.frames:
+                try:
+                    end_dt = datetime.fromisoformat(frame.end_date)
+                    dist_date = end_dt.strftime("%b %d, %Y")
+                except (ValueError, TypeError):
+                    dist_date = frame.end_date
+
+                history_table.add_row(
+                    str(frame.frame_number),
+                    dist_date,
+                    f"{frame.rewards_eth:.4f}",
+                    f"{frame.duration_days:.1f} days",
+                    fmt_apy(frame.apy),
+                )
+
+            console.print(history_table)
+            console.print()
 
 
 @app.command()
