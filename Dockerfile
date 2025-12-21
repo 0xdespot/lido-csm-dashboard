@@ -47,5 +47,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # Expose port for web dashboard
 EXPOSE 3000
 
-# Default command - csm is now a proper entry point from pip install
+# Default command - csm is now an entry point from pip install
 CMD ["csm", "serve", "--host", "0.0.0.0", "--port", "3000"]

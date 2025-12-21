@@ -65,6 +65,7 @@ Available settings:
 - `BEACON_API_URL`: Beacon chain API (default: https://beaconcha.in/api/v1)
 - `BEACON_API_KEY`: Optional API key for beaconcha.in (higher rate limits)
 - `ETHERSCAN_API_KEY`: Optional API key for Etherscan (recommended for accurate historical data)
+- `THEGRAPH_API_KEY`: Optional API key for The Graph (enables historical Bond APY per distribution frame)
 - `CACHE_TTL_SECONDS`: Cache duration in seconds (default: 300)
 
 ## Usage
@@ -285,7 +286,7 @@ The dashboard shows three APY metrics when using the `--detailed` flag:
 
 **Bond APY** represents the stETH rebase rate—the automatic growth of your bond due to Ethereum staking rewards. This rate is set by the Lido protocol and applies equally to all operators. The dashboard shows the current 7-day average rate from Lido's API.
 
-> **Note**: Bond APY shows the current stETH rate for both 28-Day and Lifetime columns, as historical rates aren't readily available.
+> **Note**: With a Graph API key configured (`THEGRAPH_API_KEY`), Bond APY shows the actual historical stETH rate for each distribution frame. Without the API key, it falls back to the current rate (marked with an asterisk).
 
 ### Why You Might Want an Etherscan API Key
 
@@ -303,6 +304,18 @@ The actual reward data lives on IPFS and is always accessible. However, to *disc
 4. Add to your `.env` file: `ETHERSCAN_API_KEY=your_key_here`
 
 The free tier allows 5 calls/second, which is plenty for this dashboard.
+
+### Why You Might Want a Graph API Key
+
+The Graph provides historical stETH APR data from the Lido subgraph. Without this API key, Bond APY calculations use the current rate for all periods, which is less accurate.
+
+**How to get one (free):**
+1. Go to [thegraph.com/studio](https://thegraph.com/studio/)
+2. Connect your wallet and create an account
+3. Go to "API Keys" and create a new key
+4. Add to your `.env` file: `THEGRAPH_API_KEY=your_key_here`
+
+The free tier includes 100,000 queries/month, which is plenty for this dashboard.
 
 ## Data Sources
 
