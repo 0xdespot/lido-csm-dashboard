@@ -91,10 +91,12 @@ async def get_operator(
             "previous_distribution_apy": rewards.apy.previous_distribution_apy,
             "previous_net_apy": rewards.apy.previous_net_apy,
             "previous_bond_eth": rewards.apy.previous_bond_eth,
+            "previous_bond_apr": rewards.apy.previous_bond_apr,
             "previous_net_total_eth": rewards.apy.previous_net_total_eth,
             "current_distribution_eth": rewards.apy.current_distribution_eth,
             "current_distribution_apy": rewards.apy.current_distribution_apy,
             "current_bond_eth": rewards.apy.current_bond_eth,
+            "current_bond_apr": rewards.apy.current_bond_apr,
             "current_net_total_eth": rewards.apy.current_net_total_eth,
             "lifetime_distribution_eth": rewards.apy.lifetime_distribution_eth,
             "lifetime_bond_eth": lifetime_bond,  # Actual excess bond, not estimate
@@ -106,6 +108,7 @@ async def get_operator(
             "bond_apy": rewards.apy.bond_apy,
             "net_apy_28d": rewards.apy.net_apy_28d,
             "net_apy_ltd": rewards.apy.net_apy_ltd,
+            "uses_historical_apr": rewards.apy.uses_historical_apr,
         }
         # Add frames if available (from history=true)
         if rewards.apy.frames:
