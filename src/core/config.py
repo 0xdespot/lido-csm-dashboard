@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Etherscan API (optional, for historical event queries)
     etherscan_api_key: str | None = None
 
+    # The Graph API (optional, for historical stETH APR data)
+    thegraph_api_key: str | None = None
+
     # Data Sources
     rewards_proofs_url: str = (
         "https://raw.githubusercontent.com/lidofinance/csm-rewards/mainnet/proofs.json"

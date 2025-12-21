@@ -290,40 +290,70 @@ class OperatorService:
             previous_net_apy = round(previous_distribution_apy + bond_apy, 2)
 
         # 4. Calculate bond stETH earnings (from stETH rebasing)
-        # Formula: bond_eth * (bond_apy / 100) * (duration_days / 365)
+        # Formula: bond_eth * (apr / 100) * (duration_days / 365)
+        # Uses historical APR from Lido subgraph when available
         previous_bond_eth = None
         current_bond_eth = None
         lifetime_bond_eth = None
         previous_net_total_eth = None
         current_net_total_eth = None
         lifetime_net_total_eth = None
+        previous_bond_apr = None  # Track which APR was used
+        current_bond_apr = None
 
-        if bond_apy is not None and bond_eth > 0:
+        # Fetch historical APR data (returns [] if no API key)
+        historical_apr_data = await self.lido_api.get_historical_apr_data()
+
+        if bond_eth > 0:
             # Previous frame bond earnings
             if frames and len(frames) >= 2:
-                prev_days = self.ipfs_logs.calculate_frame_duration_days(frames[-2])
+                prev_frame = frames[-2]
+                prev_days = self.ipfs_logs.calculate_frame_duration_days(prev_frame)
                 if prev_days > 0:
-                    previous_bond_eth = round(
-                        float(bond_eth) * (bond_apy / 100) * (prev_days / 365), 6
+                    # Use historical APR if available, otherwise fall back to current
+                    prev_apr = self.lido_api.get_apr_for_block(
+                        historical_apr_data, prev_frame.block_number
                     )
+                    if prev_apr is None:
+                        prev_apr = bond_apy
+                    if prev_apr is not None:
+                        previous_bond_apr = round(prev_apr, 2)
+                        previous_bond_eth = round(
+                            float(bond_eth) * (prev_apr / 100) * (prev_days / 365), 6
+                        )
 
             # Current frame bond earnings
             if frames:
-                curr_days = self.ipfs_logs.calculate_frame_duration_days(frames[-1])
+                curr_frame = frames[-1]
+                curr_days = self.ipfs_logs.calculate_frame_duration_days(curr_frame)
                 if curr_days > 0:
-                    current_bond_eth = round(
-                        float(bond_eth) * (bond_apy / 100) * (curr_days / 365), 6
+                    # Use historical APR if available, otherwise fall back to current
+                    curr_apr = self.lido_api.get_apr_for_block(
+                        historical_apr_data, curr_frame.block_number
                     )
+                    if curr_apr is None:
+                        curr_apr = bond_apy
+                    if curr_apr is not None:
+                        current_bond_apr = round(curr_apr, 2)
+                        current_bond_eth = round(
+                            float(bond_eth) * (curr_apr / 100) * (curr_days / 365), 6
+                        )
 
-            # Lifetime bond earnings (sum of all frame durations)
+            # Lifetime bond earnings (sum of all frame durations with per-frame APR)
             if frames:
-                total_days = sum(
-                    self.ipfs_logs.calculate_frame_duration_days(f) for f in frames
-                )
-                if total_days > 0:
-                    lifetime_bond_eth = round(
-                        float(bond_eth) * (bond_apy / 100) * (total_days / 365), 6
-                    )
+                lifetime_bond_sum = 0.0
+                for f in frames:
+                    f_days = self.ipfs_logs.calculate_frame_duration_days(f)
+                    if f_days > 0:
+                        f_apr = self.lido_api.get_apr_for_block(
+                            historical_apr_data, f.block_number
+                        )
+                        if f_apr is None:
+                            f_apr = bond_apy
+                        if f_apr is not None:
+                            lifetime_bond_sum += float(bond_eth) * (f_apr / 100) * (f_days / 365)
+                if lifetime_bond_sum > 0:
+                    lifetime_bond_eth = round(lifetime_bond_sum, 6)
 
         # 5. Calculate net totals (Rewards + Bond)
         if previous_distribution_eth is not None or previous_bond_eth is not None:
@@ -380,6 +410,9 @@ class OperatorService:
             previous_bond_eth=previous_bond_eth,
             current_bond_eth=current_bond_eth,
             lifetime_bond_eth=lifetime_bond_eth,
+            previous_bond_apr=previous_bond_apr,
+            current_bond_apr=current_bond_apr,
+            uses_historical_apr=bool(historical_apr_data),
             previous_net_total_eth=previous_net_total_eth,
             current_net_total_eth=current_net_total_eth,
             lifetime_net_total_eth=lifetime_net_total_eth,
