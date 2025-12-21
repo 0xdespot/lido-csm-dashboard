@@ -421,11 +421,16 @@ def rewards(
             fmt_apy(rewards.apy.current_distribution_apy),
             fmt_apy(rewards.apy.historical_reward_apy_ltd),
         )
+        # Show historical APR for Previous/Current if available, otherwise current APR
+        prev_bond_apr = rewards.apy.previous_bond_apr or rewards.apy.bond_apy
+        curr_bond_apr = rewards.apy.current_bond_apr or rewards.apy.bond_apy
+        # Only show asterisk if NOT using historical APR from subgraph
+        bond_label = "Bond APY (stETH)" if rewards.apy.uses_historical_apr else "Bond APY (stETH)*"
         apy_table.add_row(
-            "Bond APY (stETH)*",
-            fmt_apy(rewards.apy.bond_apy),
-            fmt_apy(rewards.apy.bond_apy),
-            fmt_apy(rewards.apy.bond_apy),
+            bond_label,
+            fmt_apy(prev_bond_apr),
+            fmt_apy(curr_bond_apr),
+            fmt_apy(rewards.apy.bond_apy),  # Lifetime uses current APR
         )
         apy_table.add_row(
             "[bold]NET APY[/bold]",
@@ -458,7 +463,11 @@ def rewards(
         )
 
         console.print(apy_table)
-        console.print("[dim]*Previous/Current Bond are estimates; Lifetime uses actual Excess Bond[/dim]")
+        # Show appropriate footer based on whether historical APR was used
+        if rewards.apy.uses_historical_apr:
+            console.print("[dim]Previous/Current use historical APR; Lifetime uses actual Excess Bond[/dim]")
+        else:
+            console.print("[dim]*Previous/Current Bond are estimates; Lifetime uses actual Excess Bond[/dim]")
 
         # Show next distribution estimate
         if rewards.apy.next_distribution_date:
