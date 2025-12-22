@@ -11,8 +11,11 @@ Track your Lido Community Staking Module (CSM) validator earnings, excess bond, 
 - Look up operator by Ethereum address (manager or rewards address) or operator ID
 - View current bond vs required bond (excess is claimable)
 - Track cumulative rewards and unclaimed amounts
+- Operator type detection (Permissionless, ICS/Legacy EA, etc.)
 - Detailed validator status from beacon chain (with `--detailed` flag)
 - APY metrics: reward APY, bond APY (stETH rebase), and net APY
+- Full distribution history with per-frame breakdown (with `--history` flag)
+- Withdrawal/claim history tracking (with `--withdrawals` flag)
 - JSON output for scripting and automation
 - CLI for quick terminal lookups
 - Web interface for browser-based monitoring
@@ -109,6 +112,8 @@ csm rewards [ADDRESS] [OPTIONS]
 | `ADDRESS` | | Ethereum address (required unless `--id` is provided) |
 | `--id` | `-i` | Operator ID (skips address lookup, faster) |
 | `--detailed` | `-d` | Include validator status from beacon chain and APY metrics |
+| `--history` | `-H` | Show all historical distribution frames with per-frame APY |
+| `--withdrawals` | `-w` | Include withdrawal/claim history |
 | `--json` | `-j` | Output as JSON (same format as API) |
 | `--rpc` | `-r` | Custom RPC URL |
 
@@ -123,6 +128,12 @@ csm rewards --id 42
 
 # Get detailed validator info and APY
 csm rewards --id 42 --detailed
+
+# Show full distribution history with Previous/Current/Lifetime columns
+csm rewards --id 42 --history
+
+# Include withdrawal history
+csm rewards --id 42 --withdrawals
 
 # JSON output for scripting
 csm rewards --id 42 --json
@@ -207,17 +218,16 @@ csm rewards --id 333 --json
   "operator_id": 333,
   "manager_address": "0x6ac683C503CF210CCF88193ec7ebDe2c993f63a4",
   "reward_address": "0x55915Cf2115c4D6e9085e94c8dAD710cabefef31",
+  "curve_id": 2,
+  "operator_type": "Permissionless",
   "rewards": {
-    "current_bond_eth": 651.5523536856277,
+    "current_bond_eth": 651.55,
     "required_bond_eth": 650.2,
-    "excess_bond_eth": 1.3523536856277778,
-    "cumulative_rewards_shares": 8973877501313655495,
-    "cumulative_rewards_eth": 10.9642938931415,
-    "distributed_shares": 7867435720490255061,
-    "distributed_eth": 9.61244204773546,
-    "unclaimed_shares": 1106441780823400434,
-    "unclaimed_eth": 1.3518518454060409,
-    "total_claimable_eth": 2.7042055310338187
+    "excess_bond_eth": 1.35,
+    "cumulative_rewards_eth": 10.96,
+    "distributed_eth": 9.61,
+    "unclaimed_eth": 1.35,
+    "total_claimable_eth": 2.70
   },
   "validators": {
     "total": 500,
@@ -232,31 +242,52 @@ With `--detailed`, additional fields are included:
 ```json
 {
   "operator_id": 333,
-  "...": "...",
+  "curve_id": 2,
+  "operator_type": "Permissionless",
   "validators": {
     "total": 500,
     "active": 500,
     "exited": 0,
     "by_status": {
-      "active": 100,
+      "active": 500,
       "pending": 0,
       "exiting": 0,
       "exited": 0,
-      "slashed": 0,
-      "unknown": 0
+      "slashed": 0
     }
   },
   "performance": {
     "avg_effectiveness": 98.5
   },
   "apy": {
-    "historical_reward_apy_28d": 2.21,
-    "historical_reward_apy_ltd": 2.03,
-    "bond_apy": 2.54,
-    "net_apy_28d": 4.75,
-    "net_apy_ltd": 4.57
+    "current_distribution_apy": 2.77,
+    "current_bond_apr": 2.56,
+    "net_apy_28d": 5.33,
+    "lifetime_reward_apy": 2.80,
+    "lifetime_bond_apy": 2.60,
+    "lifetime_net_apy": 5.40
   },
   "active_since": "2025-02-16T12:00:00"
+}
+```
+
+With `--history`, you also get the full distribution frame history:
+
+```json
+{
+  "apy": {
+    "frames": [
+      {
+        "frame_number": 1,
+        "start_date": "2025-03-14T00:00:00",
+        "end_date": "2025-04-11T00:00:00",
+        "rewards_eth": 1.2345,
+        "validator_count": 500,
+        "duration_days": 28.0,
+        "apy": 2.85
+      }
+    ]
+  }
 }
 ```
 
@@ -264,12 +295,15 @@ With `--detailed`, additional fields are included:
 
 - `GET /api/operator/{address_or_id}` - Get operator rewards data
   - Query param: `?detailed=true` for validator status and APY
+  - Query param: `?history=true` for all historical distribution frames
+  - Query param: `?withdrawals=true` for withdrawal/claim history
+- `GET /api/operator/{address_or_id}/strikes` - Get detailed validator strikes
 - `GET /api/operators` - List all operators with rewards
 - `GET /api/health` - Health check
 
 ## Understanding APY Metrics
 
-The dashboard shows three APY metrics when using the `--detailed` flag:
+The dashboard shows three APY metrics when using the `--detailed` or `--history` flags:
 
 | Metric | What It Means |
 |--------|---------------|
@@ -277,16 +311,34 @@ The dashboard shows three APY metrics when using the `--detailed` flag:
 | **Bond APY** | Automatic growth of your stETH bond from protocol rebasing (same for all operators) |
 | **NET APY** | Total return = Reward APY + Bond APY |
 
+### Display Modes
+
+- **`--detailed`**: Shows only the Current frame column (simpler view)
+- **`--history`**: Shows Previous, Current, and Lifetime columns with full distribution history
+
 ### How APY is Calculated
 
-**Reward APY** is calculated from actual reward distribution data published by Lido. Every ~28 days, Lido calculates how much each operator earned and publishes a "distribution frame" to IPFS (a decentralized file storage network). The dashboard fetches all these historical frames to calculate both 28-day and lifetime APY.
+**Reward APY** is calculated from actual reward distribution data published by Lido. Every ~28 days, Lido calculates how much each operator earned and publishes a "distribution frame" to IPFS (a decentralized file storage network). The dashboard fetches all these historical frames to calculate APY.
 
-- **28-Day APY**: Based on the most recent ~28 days of reward distributions
-- **Lifetime APY**: Based on all periods where you earned rewards (excludes ramp-up periods with no rewards to avoid misleadingly low numbers)
+- **Current APY**: Based on the most recent distribution frame (~28 days)
+- **Previous APY**: Based on the second-to-last distribution frame
+- **Lifetime APY**: Duration-weighted average of all frames, using **per-frame bond requirements** for accuracy
 
-**Bond APY** represents the stETH rebase rate—the automatic growth of your bond due to Ethereum staking rewards. This rate is set by the Lido protocol and applies equally to all operators. The dashboard shows the current 7-day average rate from Lido's API.
+The **Lifetime APY** calculation is particularly sophisticated: it uses each frame's actual validator count to determine the bond requirement for that period, then calculates a duration-weighted average. This produces accurate lifetime APY even for operators who have grown significantly over time.
+
+**Bond APY** represents the stETH rebase rate—the automatic growth of your bond due to Ethereum staking rewards. This rate is set by the Lido protocol and applies equally to all operators.
 
 > **Note**: With a Graph API key configured (`THEGRAPH_API_KEY`), Bond APY shows the actual historical stETH rate for each distribution frame. Without the API key, it falls back to the current rate (marked with an asterisk).
+
+### Operator Types
+
+The dashboard detects your operator type from the CSAccounting bond curve:
+
+| Type | Description |
+|------|-------------|
+| **Permissionless** | Standard operators (Curve 2, current default) |
+| **Permissionless (Legacy)** | Early permissionless operators (Curve 0, deprecated) |
+| **ICS/Legacy EA** | Incentivized Community Stakers / Early Adopters (Curve 1) |
 
 ### Why You Might Want an Etherscan API Key
 
