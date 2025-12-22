@@ -33,5 +33,27 @@
     "outputs": [
       {"name": "", "type": "uint256"}
     ]
+  },
+  {
+    "name": "getBondCurve",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256"}
+    ],
+    "outputs": [
+      {"name": "points", "type": "uint256[]"}
+    ]
+  },
+  {
+    "name": "getBondCurveId",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256"}
+    ],
+    "outputs": [
+      {"name": "", "type": "uint256"}
+    ]
   }
 ]
