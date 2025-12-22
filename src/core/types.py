@@ -57,7 +57,8 @@ class DistributionFrame(BaseModel):
     rewards_eth: float
     rewards_shares: int
     duration_days: float
-    apy: float | None = None  # Annualized for this frame
+    validator_count: int = 0  # Number of validators in this frame
+    apy: float | None = None  # Annualized for this frame (kept for backwards compat)
 
 
 class WithdrawalEvent(BaseModel):
@@ -84,7 +85,7 @@ class APYMetrics(BaseModel):
     # Previous distribution frame metrics
     previous_distribution_eth: float | None = None
     previous_distribution_apy: float | None = None
-    previous_net_apy: float | None = None  # previous_reward_apy + current_bond_apy
+    previous_net_apy: float | None = None  # previous_reward_apy + previous_bond_apy
 
     # Current distribution frame metrics
     current_distribution_eth: float | None = None
@@ -97,9 +98,14 @@ class APYMetrics(BaseModel):
     # Lifetime totals
     lifetime_distribution_eth: float | None = None  # Sum of all frame rewards
 
+    # Accurate lifetime APY (calculated with per-frame bond when history available)
+    lifetime_reward_apy: float | None = None  # Duration-weighted avg from all frames
+    lifetime_bond_apy: float | None = None  # Duration-weighted avg bond APY
+    lifetime_net_apy: float | None = None  # lifetime_reward_apy + lifetime_bond_apy
+
     # Historical Reward APY (from IPFS distribution logs) - most accurate
     historical_reward_apy_28d: float | None = None  # Kept for backwards compat
-    historical_reward_apy_ltd: float | None = None  # Lifetime
+    historical_reward_apy_ltd: float | None = None  # Lifetime (legacy)
 
     # Bond APY (stETH rebase appreciation)
     bond_apy: float | None = None
@@ -174,6 +180,10 @@ class OperatorRewards(BaseModel):
     node_operator_id: int
     manager_address: str
     reward_address: str
+
+    # Operator type (from bond curve)
+    curve_id: int = 0  # 0=Permissionless, 1=ICS/Legacy EA
+    operator_type: str = "Permissionless"  # Human-readable type
 
     # Bond information
     current_bond_eth: Decimal
