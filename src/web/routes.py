@@ -46,16 +46,16 @@ async def get_operator(
         "curve_id": rewards.curve_id,
         "operator_type": rewards.operator_type,
         "rewards": {
-            "current_bond_eth": float(rewards.current_bond_eth),
-            "required_bond_eth": float(rewards.required_bond_eth),
-            "excess_bond_eth": float(rewards.excess_bond_eth),
+            "current_bond_eth": str(rewards.current_bond_eth),
+            "required_bond_eth": str(rewards.required_bond_eth),
+            "excess_bond_eth": str(rewards.excess_bond_eth),
             "cumulative_rewards_shares": rewards.cumulative_rewards_shares,
-            "cumulative_rewards_eth": float(rewards.cumulative_rewards_eth),
+            "cumulative_rewards_eth": str(rewards.cumulative_rewards_eth),
             "distributed_shares": rewards.distributed_shares,
-            "distributed_eth": float(rewards.distributed_eth),
+            "distributed_eth": str(rewards.distributed_eth),
             "unclaimed_shares": rewards.unclaimed_shares,
-            "unclaimed_eth": float(rewards.unclaimed_eth),
-            "total_claimable_eth": float(rewards.total_claimable_eth),
+            "unclaimed_eth": str(rewards.unclaimed_eth),
+            "total_claimable_eth": str(rewards.total_claimable_eth),
         },
         "validators": {
             "total": rewards.total_validators,
@@ -153,7 +153,7 @@ async def get_operator(
     if rewards.health:
         result["health"] = {
             "bond_healthy": rewards.health.bond_healthy,
-            "bond_deficit_eth": float(rewards.health.bond_deficit_eth),
+            "bond_deficit_eth": str(rewards.health.bond_deficit_eth),
             "stuck_validators_count": rewards.health.stuck_validators_count,
             "slashed_validators_count": rewards.health.slashed_validators_count,
             "validators_at_risk_count": rewards.health.validators_at_risk_count,
@@ -163,6 +163,7 @@ async def get_operator(
                 "validators_near_ejection": rewards.health.strikes.validators_near_ejection,
                 "total_strikes": rewards.health.strikes.total_strikes,
                 "max_strikes": rewards.health.strikes.max_strikes,
+                "strike_threshold": rewards.health.strikes.strike_threshold,
             },
             "has_issues": rewards.health.has_issues,
         }
@@ -193,18 +194,25 @@ async def get_operator_strikes(identifier: str):
     else:
         raise HTTPException(status_code=400, detail="Invalid identifier format")
 
-    strikes = await service.get_operator_strikes(operator_id)
+    # Get curve_id to determine strike threshold
+    curve_id = await service.onchain.get_bond_curve_id(operator_id)
+    strikes = await service.get_operator_strikes(operator_id, curve_id)
 
     # Fetch frame dates for tooltip display
     frame_dates = await service.get_recent_frame_dates(6)
 
+    # Get the threshold for this operator type
+    strike_threshold = strikes[0].strike_threshold if strikes else 3
+
     return {
         "operator_id": operator_id,
+        "strike_threshold": strike_threshold,
         "frame_dates": frame_dates,
         "validators": [
             {
                 "pubkey": s.pubkey,
                 "strike_count": s.strike_count,
+                "strike_threshold": s.strike_threshold,
                 "strikes": s.strikes,
                 "at_ejection_risk": s.at_ejection_risk,
             }

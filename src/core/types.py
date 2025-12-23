@@ -144,10 +144,11 @@ class StrikeSummary(BaseModel):
     """Summary of strikes for an operator."""
 
     total_validators_with_strikes: int = 0
-    validators_at_risk: int = 0  # Validators with 3+ strikes (ejection eligible)
-    validators_near_ejection: int = 0  # Validators with 2 strikes (one away from ejection)
+    validators_at_risk: int = 0  # Validators at or above strike threshold (ejection eligible)
+    validators_near_ejection: int = 0  # Validators one strike away from ejection
     total_strikes: int = 0
     max_strikes: int = 0  # Highest strike count on any single validator
+    strike_threshold: int = 3  # Strikes required for ejection (3 for Permissionless, 4 for ICS)
 
 
 class HealthStatus(BaseModel):
