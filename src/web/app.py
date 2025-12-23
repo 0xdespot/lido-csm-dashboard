@@ -327,13 +327,13 @@ def create_app() -> FastAPI:
                 document.getElementById('active-validators').textContent = data.validators.active;
                 document.getElementById('exited-validators').textContent = data.validators.exited;
 
-                document.getElementById('current-bond').textContent = (data.rewards?.current_bond_eth ?? 0).toFixed(6);
-                document.getElementById('required-bond').textContent = (data.rewards?.required_bond_eth ?? 0).toFixed(6);
-                document.getElementById('excess-bond').textContent = (data.rewards?.excess_bond_eth ?? 0).toFixed(6);
-                document.getElementById('cumulative-rewards').textContent = (data.rewards?.cumulative_rewards_eth ?? 0).toFixed(6);
-                document.getElementById('distributed-rewards').textContent = (data.rewards?.distributed_eth ?? 0).toFixed(6);
-                document.getElementById('unclaimed-rewards').textContent = (data.rewards?.unclaimed_eth ?? 0).toFixed(6);
-                document.getElementById('total-claimable').textContent = (data.rewards?.total_claimable_eth ?? 0).toFixed(6);
+                document.getElementById('current-bond').textContent = parseFloat(data.rewards?.current_bond_eth ?? 0).toFixed(6);
+                document.getElementById('required-bond').textContent = parseFloat(data.rewards?.required_bond_eth ?? 0).toFixed(6);
+                document.getElementById('excess-bond').textContent = parseFloat(data.rewards?.excess_bond_eth ?? 0).toFixed(6);
+                document.getElementById('cumulative-rewards').textContent = parseFloat(data.rewards?.cumulative_rewards_eth ?? 0).toFixed(6);
+                document.getElementById('distributed-rewards').textContent = parseFloat(data.rewards?.distributed_eth ?? 0).toFixed(6);
+                document.getElementById('unclaimed-rewards').textContent = parseFloat(data.rewards?.unclaimed_eth ?? 0).toFixed(6);
+                document.getElementById('total-claimable').textContent = parseFloat(data.rewards?.total_claimable_eth ?? 0).toFixed(6);
 
                 results.classList.remove('hidden');
             } catch (err) {
@@ -413,7 +413,7 @@ def create_app() -> FastAPI:
                     if (h.bond_healthy) {
                         document.getElementById('health-bond').innerHTML = '<span class="text-green-400">HEALTHY</span>';
                     } else {
-                        document.getElementById('health-bond').innerHTML = `<span class="text-red-400">DEFICIT -${h.bond_deficit_eth.toFixed(4)} ETH</span>`;
+                        document.getElementById('health-bond').innerHTML = `<span class="text-red-400">DEFICIT -${parseFloat(h.bond_deficit_eth).toFixed(4)} ETH</span>`;
                     }
 
                     // Stuck validators
