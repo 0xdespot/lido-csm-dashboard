@@ -34,16 +34,16 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
         "curve_id": rewards.curve_id,
         "operator_type": rewards.operator_type,
         "rewards": {
-            "current_bond_eth": float(rewards.current_bond_eth),
-            "required_bond_eth": float(rewards.required_bond_eth),
-            "excess_bond_eth": float(rewards.excess_bond_eth),
+            "current_bond_eth": str(rewards.current_bond_eth),
+            "required_bond_eth": str(rewards.required_bond_eth),
+            "excess_bond_eth": str(rewards.excess_bond_eth),
             "cumulative_rewards_shares": rewards.cumulative_rewards_shares,
-            "cumulative_rewards_eth": float(rewards.cumulative_rewards_eth),
+            "cumulative_rewards_eth": str(rewards.cumulative_rewards_eth),
             "distributed_shares": rewards.distributed_shares,
-            "distributed_eth": float(rewards.distributed_eth),
+            "distributed_eth": str(rewards.distributed_eth),
             "unclaimed_shares": rewards.unclaimed_shares,
-            "unclaimed_eth": float(rewards.unclaimed_eth),
-            "total_claimable_eth": float(rewards.total_claimable_eth),
+            "unclaimed_eth": str(rewards.unclaimed_eth),
+            "total_claimable_eth": str(rewards.total_claimable_eth),
         },
         "validators": {
             "total": rewards.total_validators,
@@ -122,7 +122,7 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
     if rewards.health:
         result["health"] = {
             "bond_healthy": rewards.health.bond_healthy,
-            "bond_deficit_eth": float(rewards.health.bond_deficit_eth),
+            "bond_deficit_eth": str(rewards.health.bond_deficit_eth),
             "stuck_validators_count": rewards.health.stuck_validators_count,
             "slashed_validators_count": rewards.health.slashed_validators_count,
             "validators_at_risk_count": rewards.health.validators_at_risk_count,
@@ -665,11 +665,12 @@ def health(
             # Fetch validator strikes details
             validator_strikes = []
             if rewards.health.strikes.total_validators_with_strikes > 0:
-                strikes_data = run_async(service.get_operator_strikes(rewards.node_operator_id))
+                strikes_data = run_async(service.get_operator_strikes(rewards.node_operator_id, rewards.curve_id))
                 validator_strikes = [
                     {
                         "pubkey": vs.pubkey,
                         "strike_count": vs.strike_count,
+                        "strike_threshold": vs.strike_threshold,
                         "at_ejection_risk": vs.at_ejection_risk,
                     }
                     for vs in strikes_data
@@ -677,7 +678,7 @@ def health(
 
             result["health"] = {
                 "bond_healthy": rewards.health.bond_healthy,
-                "bond_deficit_eth": float(rewards.health.bond_deficit_eth),
+                "bond_deficit_eth": str(rewards.health.bond_deficit_eth),
                 "stuck_validators_count": rewards.health.stuck_validators_count,
                 "slashed_validators_count": rewards.health.slashed_validators_count,
                 "validators_at_risk_count": rewards.health.validators_at_risk_count,
@@ -687,6 +688,7 @@ def health(
                     "validators_near_ejection": rewards.health.strikes.validators_near_ejection,
                     "total_strikes": rewards.health.strikes.total_strikes,
                     "max_strikes": rewards.health.strikes.max_strikes,
+                    "strike_threshold": rewards.health.strikes.strike_threshold,
                     "validators": validator_strikes,
                 },
                 "has_issues": rewards.health.has_issues,
@@ -783,9 +785,9 @@ def health(
     if strikes.total_validators_with_strikes > 0:
         console.print()
         console.print("[bold]Validator Strikes Detail:[/bold]")
-        validator_strikes = run_async(service.get_operator_strikes(rewards.node_operator_id))
+        validator_strikes = run_async(service.get_operator_strikes(rewards.node_operator_id, rewards.curve_id))
         for vs in validator_strikes:
-            strike_display = f"{vs.strike_count}/3"
+            strike_display = f"{vs.strike_count}/{vs.strike_threshold}"
             if vs.at_ejection_risk:
                 console.print(f"  {vs.pubkey}: [red bold]{strike_display}[/red bold] (EJECTION RISK!)")
             elif vs.strike_count > 0:
