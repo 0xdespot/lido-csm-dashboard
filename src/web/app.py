@@ -14,7 +14,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="CSM Operator Dashboard",
         description="Track your Lido CSM validator earnings",
-        version="0.3.4",
+        version="0.3.5",
     )
 
     app.include_router(router, prefix="/api")
