@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.6] - 2026-01-22
+
+### Added
+- Retry logic and rate limiting for validator batch fetching
+
 ## [0.3.5] - 2026-01-05
 
 ### Added
