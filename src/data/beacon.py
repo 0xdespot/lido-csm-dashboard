@@ -1,5 +1,6 @@
 """Beacon chain data fetching via beaconcha.in API."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
@@ -172,47 +173,84 @@ class BeaconDataProvider:
         Fetch validator info for multiple pubkeys.
 
         beaconcha.in supports comma-separated pubkeys (up to 100).
+        Includes retry logic for rate limiting and proper error handling.
         """
         if not pubkeys:
             return []
 
         validators = []
         batch_size = 100  # beaconcha.in limit
+        max_retries = 3
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             for i in range(0, len(pubkeys), batch_size):
                 batch = pubkeys[i : i + batch_size]
                 pubkeys_param = ",".join(batch)
 
-                try:
-                    response = await client.get(
-                        f"{self.base_url}/validator/{pubkeys_param}",
-                        headers=self._get_headers(),
-                    )
+                # Add delay between batches to avoid rate limiting
+                if i > 0:
+                    await asyncio.sleep(0.5)
 
-                    if response.status_code == 200:
-                        data = response.json().get("data", [])
-                        # API returns single object if only one validator
-                        if isinstance(data, dict):
-                            data = [data]
+                for attempt in range(max_retries):
+                    try:
+                        response = await client.get(
+                            f"{self.base_url}/validator/{pubkeys_param}",
+                            headers=self._get_headers(),
+                        )
 
-                        for v in data:
-                            validators.append(self._parse_validator(v))
-                    elif response.status_code == 404:
-                        # Validators not found - create placeholder entries
+                        if response.status_code == 200:
+                            data = response.json().get("data", [])
+                            # API returns single object if only one validator
+                            if isinstance(data, dict):
+                                data = [data]
+
+                            for v in data:
+                                validators.append(self._parse_validator(v))
+                            break  # Success, exit retry loop
+                        elif response.status_code == 404:
+                            # Validators not found - create placeholder entries
+                            for pubkey in batch:
+                                validators.append(
+                                    ValidatorInfo(
+                                        pubkey=pubkey,
+                                        status=ValidatorStatus.PENDING_INITIALIZED,
+                                    )
+                                )
+                            break  # Success, exit retry loop
+                        elif response.status_code == 429:
+                            # Rate limited - wait and retry
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(2**attempt)  # 1s, 2s, 4s
+                                continue
+                            # Max retries reached, add as unknown
+                            for pubkey in batch:
+                                validators.append(
+                                    ValidatorInfo(
+                                        pubkey=pubkey, status=ValidatorStatus.UNKNOWN
+                                    )
+                                )
+                            break
+                        else:
+                            # Other error status - add as unknown
+                            for pubkey in batch:
+                                validators.append(
+                                    ValidatorInfo(
+                                        pubkey=pubkey, status=ValidatorStatus.UNKNOWN
+                                    )
+                                )
+                            break
+                    except Exception:
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(1)
+                            continue
+                        # On final failure, add unknown status for this batch
                         for pubkey in batch:
                             validators.append(
                                 ValidatorInfo(
-                                    pubkey=pubkey,
-                                    status=ValidatorStatus.PENDING_INITIALIZED,
+                                    pubkey=pubkey, status=ValidatorStatus.UNKNOWN
                                 )
                             )
-                except Exception:
-                    # On error, add unknown status for this batch
-                    for pubkey in batch:
-                        validators.append(
-                            ValidatorInfo(pubkey=pubkey, status=ValidatorStatus.UNKNOWN)
-                        )
+                        break
 
         return validators
 
