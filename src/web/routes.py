@@ -258,6 +258,12 @@ async def list_saved_operators():
     logger.info("Loading saved operators from database")
     try:
         operators = await get_saved_operators()
+        # Log what data each operator has
+        for op in operators:
+            op_id = op.get("operator_id", "?")
+            frames = len(op.get("apy", {}).get("frames", []))
+            withdrawals = len(op.get("withdrawals", []))
+            logger.info(f"  Operator {op_id}: {frames} frames, {withdrawals} withdrawals in cache")
         logger.info(f"Loaded {len(operators)} saved operators")
         return {"operators": operators}
     except Exception as e:
@@ -271,6 +277,7 @@ async def save_operator_endpoint(identifier: str):
 
     Fetches current operator data (including history and withdrawals) and stores it in the database.
     """
+    logger.info(f"Saving operator: {identifier}")
     service = OperatorService()
 
     # Determine operator ID
@@ -394,6 +401,9 @@ async def save_operator_endpoint(identifier: str):
         ]
 
     # Save to database
+    frames_count = len(data.get("apy", {}).get("frames", []))
+    withdrawals_count = len(data.get("withdrawals", []))
+    logger.info(f"Saving operator {operator_id}: {frames_count} frames, {withdrawals_count} withdrawals")
     await save_operator(operator_id, data)
 
     return {"status": "saved", "operator_id": operator_id}
@@ -443,6 +453,7 @@ async def refresh_operator_endpoint(identifier: str):
 
     Fetches fresh data (including history and withdrawals) from APIs and updates the database.
     """
+    logger.info(f"Refreshing operator: {identifier}")
     service = OperatorService()
 
     # Determine operator ID
@@ -570,6 +581,9 @@ async def refresh_operator_endpoint(identifier: str):
         ]
 
     # Update in database
+    frames_count = len(data.get("apy", {}).get("frames", []))
+    withdrawals_count = len(data.get("withdrawals", []))
+    logger.info(f"Refreshing operator {operator_id}: {frames_count} frames, {withdrawals_count} withdrawals")
     await update_operator_data(operator_id, data)
 
     return {"status": "refreshed", "operator_id": operator_id, "data": data}
