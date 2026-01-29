@@ -250,8 +250,13 @@ async def get_operator_strikes(identifier: str):
 @router.get("/saved-operators")
 async def list_saved_operators():
     """Get all saved operators with their cached data."""
-    operators = await get_saved_operators()
-    return {"operators": operators}
+    try:
+        operators = await get_saved_operators()
+        return {"operators": operators}
+    except Exception as e:
+        # Log the error and return empty list instead of crashing
+        print(f"Error loading saved operators: {e}")
+        return {"operators": [], "error": str(e)}
 
 
 @router.post("/operator/{identifier}/save")

@@ -75,26 +75,34 @@ async def get_saved_operators() -> list[dict]:
     Returns:
         List of operator data dictionaries with added metadata (saved_at, updated_at)
     """
-    await init_db()
-    db_path = await get_db_path()
+    try:
+        await init_db()
+        db_path = await get_db_path()
 
-    async with aiosqlite.connect(db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("""
-            SELECT operator_id, data_json, saved_at, updated_at
-            FROM saved_operators
-            ORDER BY saved_at DESC
-        """) as cursor:
-            rows = await cursor.fetchall()
+        async with aiosqlite.connect(db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT operator_id, data_json, saved_at, updated_at
+                FROM saved_operators
+                ORDER BY saved_at DESC
+            """) as cursor:
+                rows = await cursor.fetchall()
 
-    result = []
-    for row in rows:
-        data = json.loads(row["data_json"])
-        data["_saved_at"] = row["saved_at"]
-        data["_updated_at"] = row["updated_at"]
-        result.append(data)
+        result = []
+        for row in rows:
+            try:
+                data = json.loads(row["data_json"])
+                data["_saved_at"] = row["saved_at"]
+                data["_updated_at"] = row["updated_at"]
+                result.append(data)
+            except json.JSONDecodeError:
+                # Skip corrupted entries
+                continue
 
-    return result
+        return result
+    except Exception as e:
+        print(f"Database error in get_saved_operators: {e}")
+        return []
 
 
 async def delete_operator(operator_id: int) -> bool:
