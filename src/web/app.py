@@ -389,14 +389,8 @@ def create_app() -> FastAPI:
             return val !== null && val !== undefined ? val.toFixed(2) + '%' : '--%';
         }
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const input = document.getElementById('address').value.trim();
-
-            if (!input) return;
-
-            // Reset UI
-            loading.classList.remove('hidden');
+        // Reset UI to initial state
+        function resetUI() {
             error.classList.add('hidden');
             results.classList.add('hidden');
             validatorStatus.classList.add('hidden');
@@ -414,11 +408,11 @@ def create_app() -> FastAPI:
             withdrawalsLoaded = false;
             loadWithdrawalsBtn.textContent = 'Load Withdrawals';
             document.getElementById('active-since-row').classList.add('hidden');
+            document.getElementById('effectiveness-section').classList.add('hidden');
             loadDetailsBtn.classList.remove('hidden');
             loadDetailsBtn.disabled = false;
             loadDetailsBtn.textContent = 'Load Validator Status & APY (Beacon Chain)';
 
-            // Reset strikes state for new search
             const strikesDetailDiv = document.getElementById('strikes-detail');
             const strikesList = document.getElementById('strikes-list');
             if (strikesDetailDiv) strikesDetailDiv.classList.add('hidden');
@@ -426,6 +420,150 @@ def create_app() -> FastAPI:
                 strikesList.classList.add('hidden');
                 strikesList.innerHTML = '';
             }
+        }
+
+        // Display operator data in UI (handles both basic and detailed data)
+        function displayOperatorData(data) {
+            // Basic info
+            document.getElementById('operator-id').textContent = data.operator_id;
+            document.getElementById('manager-address').textContent = data.manager_address;
+            document.getElementById('reward-address').textContent = data.reward_address;
+
+            // Active Since
+            if (data.active_since) {
+                const activeSince = new Date(data.active_since);
+                const options = { year: 'numeric', month: 'short', day: 'numeric' };
+                document.getElementById('active-since').textContent = activeSince.toLocaleDateString('en-US', options);
+                document.getElementById('active-since-row').classList.remove('hidden');
+            }
+
+            // Tip
+            document.getElementById('tip-operator-id').textContent = data.operator_id;
+            document.getElementById('lookup-tip').classList.remove('hidden');
+
+            // Validators
+            document.getElementById('total-validators').textContent = data.validators?.total ?? 0;
+            document.getElementById('active-validators').textContent = data.validators?.active ?? 0;
+            document.getElementById('exited-validators').textContent = data.validators?.exited ?? 0;
+
+            // Rewards
+            document.getElementById('current-bond').textContent = parseFloat(data.rewards?.current_bond_eth ?? 0).toFixed(6);
+            document.getElementById('required-bond').textContent = parseFloat(data.rewards?.required_bond_eth ?? 0).toFixed(6);
+            document.getElementById('excess-bond').textContent = parseFloat(data.rewards?.excess_bond_eth ?? 0).toFixed(6);
+            document.getElementById('cumulative-rewards').textContent = parseFloat(data.rewards?.cumulative_rewards_eth ?? 0).toFixed(6);
+            document.getElementById('distributed-rewards').textContent = parseFloat(data.rewards?.distributed_eth ?? 0).toFixed(6);
+            document.getElementById('unclaimed-rewards').textContent = parseFloat(data.rewards?.unclaimed_eth ?? 0).toFixed(6);
+            document.getElementById('total-claimable').textContent = parseFloat(data.rewards?.total_claimable_eth ?? 0).toFixed(6);
+
+            results.classList.remove('hidden');
+
+            // Detailed data (if available)
+            if (data.validators?.by_status) {
+                document.getElementById('status-active').textContent = data.validators.by_status.active || 0;
+                document.getElementById('status-pending').textContent = data.validators.by_status.pending || 0;
+                document.getElementById('status-exiting').textContent = data.validators.by_status.exiting || 0;
+                document.getElementById('status-exited').textContent = data.validators.by_status.exited || 0;
+                document.getElementById('status-slashed').textContent = data.validators.by_status.slashed || 0;
+                document.getElementById('status-unknown').textContent = data.validators.by_status.unknown || 0;
+                validatorStatus.classList.remove('hidden');
+                // Hide the load button since we have detailed data
+                loadDetailsBtn.classList.add('hidden');
+            }
+
+            // Performance/effectiveness
+            if (data.performance && data.performance.avg_effectiveness !== null) {
+                document.getElementById('avg-effectiveness').textContent = data.performance.avg_effectiveness.toFixed(1);
+                document.getElementById('effectiveness-section').classList.remove('hidden');
+            }
+
+            // APY
+            if (data.apy) {
+                document.getElementById('reward-apy-28d').textContent = formatApy(data.apy.historical_reward_apy_28d);
+                document.getElementById('reward-apy-ltd').textContent = formatApy(data.apy.historical_reward_apy_ltd);
+                document.getElementById('bond-apy-28d').textContent = formatApy(data.apy.bond_apy);
+                document.getElementById('bond-apy-ltd').textContent = formatApy(data.apy.bond_apy);
+                document.getElementById('net-apy-28d').textContent = formatApy(data.apy.net_apy_28d);
+                document.getElementById('net-apy-ltd').textContent = formatApy(data.apy.net_apy_ltd);
+
+                if (data.apy.next_distribution_date || data.apy.next_distribution_est_eth) {
+                    if (data.apy.next_distribution_date) {
+                        const nextDate = new Date(data.apy.next_distribution_date);
+                        const options = { year: 'numeric', month: 'short', day: 'numeric' };
+                        document.getElementById('next-dist-date').textContent = nextDate.toLocaleDateString('en-US', options);
+                    }
+                    if (data.apy.next_distribution_est_eth) {
+                        document.getElementById('next-dist-eth').textContent = data.apy.next_distribution_est_eth.toFixed(4);
+                    }
+                    nextDistribution.classList.remove('hidden');
+                }
+
+                apySection.classList.remove('hidden');
+                historySection.classList.remove('hidden');
+                withdrawalSection.classList.remove('hidden');
+            }
+
+            // Health
+            if (data.health) {
+                const h = data.health;
+
+                if (h.bond_healthy) {
+                    document.getElementById('health-bond').innerHTML = '<span class="text-green-400">HEALTHY</span>';
+                } else {
+                    document.getElementById('health-bond').innerHTML = `<span class="text-red-400">DEFICIT -${parseFloat(h.bond_deficit_eth).toFixed(4)} ETH</span>`;
+                }
+
+                if (h.stuck_validators_count === 0) {
+                    document.getElementById('health-stuck').innerHTML = '<span class="text-green-400">0</span>';
+                } else {
+                    document.getElementById('health-stuck').innerHTML = `<span class="text-red-400">${h.stuck_validators_count} (exit within 4 days!)</span>`;
+                }
+
+                if (h.slashed_validators_count === 0) {
+                    document.getElementById('health-slashed').innerHTML = '<span class="text-green-400">0</span>';
+                } else {
+                    document.getElementById('health-slashed').innerHTML = `<span class="text-red-400">${h.slashed_validators_count}</span>`;
+                }
+
+                if (h.validators_at_risk_count === 0) {
+                    document.getElementById('health-at-risk').innerHTML = '<span class="text-green-400">0</span>';
+                } else {
+                    document.getElementById('health-at-risk').innerHTML = `<span class="text-yellow-400">${h.validators_at_risk_count}</span>`;
+                }
+
+                // Strikes
+                const strikesDetailDiv = document.getElementById('strikes-detail');
+                if (h.strikes && h.strikes.total_validators_with_strikes === 0) {
+                    document.getElementById('health-strikes').innerHTML = '<span class="text-green-400">0 validators</span>';
+                    strikesDetailDiv.classList.add('hidden');
+                } else if (h.strikes) {
+                    const strikeParts = [];
+                    if (h.strikes.validators_at_risk > 0) {
+                        strikeParts.push(`${h.strikes.validators_at_risk} at ejection`);
+                    }
+                    if (h.strikes.validators_near_ejection > 0) {
+                        strikeParts.push(`${h.strikes.validators_near_ejection} near ejection`);
+                    }
+                    const strikeStatus = strikeParts.length > 0 ? strikeParts.join(', ') : 'monitoring';
+                    const strikeColor = h.strikes.validators_at_risk > 0 ? 'text-red-400' :
+                        (h.strikes.validators_near_ejection > 0 ? 'text-orange-400' : 'text-yellow-400');
+                    document.getElementById('health-strikes').innerHTML =
+                        `<span class="${strikeColor}">${h.strikes.total_validators_with_strikes} validators (${strikeStatus})</span>`;
+                    strikesDetailDiv.classList.remove('hidden');
+                }
+
+                healthSection.classList.remove('hidden');
+            }
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('address').value.trim();
+
+            if (!input) return;
+
+            // Reset UI and show loading
+            loading.classList.remove('hidden');
+            resetUI();
 
             try {
                 const response = await fetch(`/api/operator/${input}`);
@@ -439,36 +577,7 @@ def create_app() -> FastAPI:
                     return;
                 }
 
-                // Populate results
-                document.getElementById('operator-id').textContent = data.operator_id;
-                document.getElementById('manager-address').textContent = data.manager_address;
-                document.getElementById('reward-address').textContent = data.reward_address;
-
-                // Show Active Since if available
-                if (data.active_since) {
-                    const activeSince = new Date(data.active_since);
-                    const options = { year: 'numeric', month: 'short', day: 'numeric' };
-                    document.getElementById('active-since').textContent = activeSince.toLocaleDateString('en-US', options);
-                    document.getElementById('active-since-row').classList.remove('hidden');
-                }
-
-                // Show tip with operator ID for faster lookups
-                document.getElementById('tip-operator-id').textContent = data.operator_id;
-                document.getElementById('lookup-tip').classList.remove('hidden');
-
-                document.getElementById('total-validators').textContent = data.validators.total;
-                document.getElementById('active-validators').textContent = data.validators.active;
-                document.getElementById('exited-validators').textContent = data.validators.exited;
-
-                document.getElementById('current-bond').textContent = parseFloat(data.rewards?.current_bond_eth ?? 0).toFixed(6);
-                document.getElementById('required-bond').textContent = parseFloat(data.rewards?.required_bond_eth ?? 0).toFixed(6);
-                document.getElementById('excess-bond').textContent = parseFloat(data.rewards?.excess_bond_eth ?? 0).toFixed(6);
-                document.getElementById('cumulative-rewards').textContent = parseFloat(data.rewards?.cumulative_rewards_eth ?? 0).toFixed(6);
-                document.getElementById('distributed-rewards').textContent = parseFloat(data.rewards?.distributed_eth ?? 0).toFixed(6);
-                document.getElementById('unclaimed-rewards').textContent = parseFloat(data.rewards?.unclaimed_eth ?? 0).toFixed(6);
-                document.getElementById('total-claimable').textContent = parseFloat(data.rewards?.total_claimable_eth ?? 0).toFixed(6);
-
-                results.classList.remove('hidden');
+                displayOperatorData(data);
             } catch (err) {
                 loading.classList.add('hidden');
                 error.classList.remove('hidden');
@@ -886,6 +995,7 @@ def create_app() -> FastAPI:
         const saveOperatorBtn = document.getElementById('save-operator-btn');
 
         let currentOperatorSaved = false;
+        let savedOperatorsData = {};  // Store operator data by ID for quick lookup
 
         // Format relative time
         function formatRelativeTime(isoString) {
@@ -956,9 +1066,15 @@ def create_app() -> FastAPI:
                 const data = await response.json();
 
                 if (data.operators && data.operators.length > 0) {
+                    // Store data for quick lookup
+                    savedOperatorsData = {};
+                    data.operators.forEach(op => {
+                        savedOperatorsData[op.operator_id] = op;
+                    });
                     savedOperatorsList.innerHTML = data.operators.map(renderSavedOperatorCard).join('');
                     savedOperatorsSection.classList.remove('hidden');
                 } else {
+                    savedOperatorsData = {};
                     savedOperatorsSection.classList.add('hidden');
                 }
             } catch (err) {
@@ -966,10 +1082,24 @@ def create_app() -> FastAPI:
             }
         }
 
-        // View a saved operator (populate the main view)
-        window.viewSavedOperator = async function(operatorId) {
+        // View a saved operator (display cached data directly)
+        window.viewSavedOperator = function(operatorId) {
+            const opData = savedOperatorsData[operatorId];
+            if (!opData) {
+                // Fallback to API fetch if data not in cache
+                document.getElementById('address').value = operatorId;
+                form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+                return;
+            }
+
+            // Display cached data directly
             document.getElementById('address').value = operatorId;
-            form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+            resetUI();
+            displayOperatorData(opData);
+
+            // Update save button state
+            currentOperatorSaved = true;
+            updateSaveButton();
         };
 
         // Refresh a saved operator
@@ -982,10 +1112,11 @@ def create_app() -> FastAPI:
                 const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST' });
                 if (response.ok) {
                     const data = await response.json();
-                    // Update the card in the list
+                    // Update the card in the list and stored data
                     const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
                     if (card && data.data) {
                         data.data._updated_at = new Date().toISOString();
+                        savedOperatorsData[operatorId] = data.data;  // Update stored data
                         card.outerHTML = renderSavedOperatorCard(data.data);
                     }
                 }
@@ -1006,6 +1137,7 @@ def create_app() -> FastAPI:
             try {
                 const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE' });
                 if (response.ok) {
+                    delete savedOperatorsData[operatorId];  // Remove from stored data
                     const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
                     if (card) card.remove();
 
@@ -1043,6 +1175,7 @@ def create_app() -> FastAPI:
                         const data = await response.json();
                         if (data.data) {
                             data.data._updated_at = new Date().toISOString();
+                            savedOperatorsData[operatorId] = data.data;  // Update stored data
                             card.outerHTML = renderSavedOperatorCard(data.data);
                         }
                     }
@@ -1094,6 +1227,7 @@ def create_app() -> FastAPI:
                     const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE' });
                     if (response.ok) {
                         currentOperatorSaved = false;
+                        delete savedOperatorsData[operatorId];  // Remove from stored data
                         // Remove from saved list
                         const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
                         if (card) card.remove();
