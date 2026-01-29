@@ -1,11 +1,14 @@
 """Beacon chain data fetching via beaconcha.in API."""
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from ..core.config import get_settings
 from .cache import cached
@@ -256,14 +259,23 @@ class BeaconDataProvider:
 
     def _parse_validator(self, data: dict) -> ValidatorInfo:
         """Parse beaconcha.in validator response."""
+        # Validate epoch values - far-future values (like 2^64-1) indicate "not set"
+        activation_epoch = data.get("activationepoch")
+        if activation_epoch is not None and (activation_epoch < 0 or activation_epoch > 2**32):
+            activation_epoch = None
+
+        exit_epoch = data.get("exitepoch")
+        if exit_epoch is not None and (exit_epoch < 0 or exit_epoch > 2**32):
+            exit_epoch = None
+
         return ValidatorInfo(
             pubkey=data.get("pubkey", ""),
             index=data.get("validatorindex"),
             status=ValidatorStatus.from_beaconcha(data.get("status", "unknown")),
             balance_gwei=data.get("balance", 0),
             effectiveness=data.get("effectiveness"),
-            activation_epoch=data.get("activationepoch"),
-            exit_epoch=data.get("exitepoch") if data.get("exitepoch") is not None and data.get("exitepoch") >= 0 else None,
+            activation_epoch=activation_epoch,
+            exit_epoch=exit_epoch,
         )
 
     @cached(ttl=300)
@@ -280,8 +292,8 @@ class BeaconDataProvider:
 
                 if response.status_code == 200:
                     return response.json().get("data")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get validator performance for index {validator_index}: {e}")
 
         return None
 
@@ -332,13 +344,15 @@ class BeaconDataProvider:
                             # attestation_head_reward (not a "total" field)
                             income = entry.get("income", {})
                             if isinstance(income, dict):
-                                # Sum all reward types (values are in gwei)
-                                total_income_gwei += sum(income.values())
-                            elif isinstance(income, int):
+                                # Sum all reward types (values are in gwei), filtering out non-numeric
+                                total_income_gwei += sum(
+                                    v for v in income.values() if isinstance(v, (int, float))
+                                )
+                            elif isinstance(income, (int, float)):
                                 total_income_gwei += income
-                except Exception:
+                except Exception as e:
                     # On error, continue with partial data
-                    pass
+                    logger.warning(f"Failed to fetch income for validator batch: {e}")
 
         return {
             "total_income_eth": Decimal(total_income_gwei) / Decimal(10**9),
