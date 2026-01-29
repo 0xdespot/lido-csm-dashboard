@@ -231,36 +231,60 @@ def create_app() -> FastAPI:
 
             <div class="bg-gray-800 rounded-lg p-6">
                 <h3 class="text-lg font-bold mb-4">Earnings Summary</h3>
+                <div id="eth-price-display" class="hidden text-xs text-gray-500 mb-3">
+                    ETH: $<span id="eth-price-value">0</span> USD
+                </div>
                 <div class="space-y-3">
                     <div class="flex justify-between">
                         <span class="text-gray-400">Current Bond</span>
-                        <span><span id="current-bond">0</span> ETH</span>
+                        <div class="text-right">
+                            <span><span id="current-bond">0</span> ETH</span>
+                            <span id="current-bond-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-400">Required Bond</span>
-                        <span><span id="required-bond">0</span> ETH</span>
+                        <div class="text-right">
+                            <span><span id="required-bond">0</span> ETH</span>
+                            <span id="required-bond-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-400">Excess Bond</span>
-                        <span class="text-green-400"><span id="excess-bond">0</span> ETH</span>
+                        <div class="text-right">
+                            <span class="text-green-400"><span id="excess-bond">0</span> ETH</span>
+                            <span id="excess-bond-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <hr class="border-gray-700">
                     <div class="flex justify-between">
                         <span class="text-gray-400">Cumulative Rewards</span>
-                        <span><span id="cumulative-rewards">0</span> ETH</span>
+                        <div class="text-right">
+                            <span><span id="cumulative-rewards">0</span> ETH</span>
+                            <span id="cumulative-rewards-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-400">Already Distributed</span>
-                        <span><span id="distributed-rewards">0</span> ETH</span>
+                        <div class="text-right">
+                            <span><span id="distributed-rewards">0</span> ETH</span>
+                            <span id="distributed-rewards-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-400">Unclaimed Rewards</span>
-                        <span class="text-green-400"><span id="unclaimed-rewards">0</span> ETH</span>
+                        <div class="text-right">
+                            <span class="text-green-400"><span id="unclaimed-rewards">0</span> ETH</span>
+                            <span id="unclaimed-rewards-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <hr class="border-gray-700">
                     <div class="flex justify-between text-xl font-bold">
                         <span>Total Claimable</span>
-                        <span class="text-yellow-400"><span id="total-claimable">0</span> ETH</span>
+                        <div class="text-right">
+                            <span class="text-yellow-400"><span id="total-claimable">0</span> ETH</span>
+                            <div id="total-claimable-usd" class="text-gray-400 text-sm font-normal"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -403,6 +427,65 @@ def create_app() -> FastAPI:
         const apySection = document.getElementById('apy-section');
         const healthSection = document.getElementById('health-section');
         const historySection = document.getElementById('history-section');
+
+        // ETH price state
+        let ethPriceUsd = null;
+
+        // Fetch ETH price from CoinGecko via our API
+        async function fetchEthPrice() {
+            try {
+                const response = await fetch('/api/price/eth');
+                const data = await response.json();
+                if (data.price) {
+                    ethPriceUsd = data.price;
+                    document.getElementById('eth-price-value').textContent = ethPriceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    document.getElementById('eth-price-display').classList.remove('hidden');
+                    // Update any displayed USD values
+                    updateUsdDisplays();
+                    // Re-render saved operator cards to show USD
+                    if (typeof rerenderSavedOperators === 'function') {
+                        rerenderSavedOperators();
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to fetch ETH price:', err);
+            }
+        }
+
+        // Format USD value
+        function formatUsd(ethAmount) {
+            if (ethPriceUsd === null || ethAmount === null || ethAmount === undefined) return '';
+            const usd = parseFloat(ethAmount) * ethPriceUsd;
+            if (usd < 0.01) return '';
+            return '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        // Update all USD displays based on current ETH values
+        function updateUsdDisplays() {
+            if (ethPriceUsd === null) return;
+
+            const fields = [
+                { eth: 'current-bond', usd: 'current-bond-usd' },
+                { eth: 'required-bond', usd: 'required-bond-usd' },
+                { eth: 'excess-bond', usd: 'excess-bond-usd' },
+                { eth: 'cumulative-rewards', usd: 'cumulative-rewards-usd' },
+                { eth: 'distributed-rewards', usd: 'distributed-rewards-usd' },
+                { eth: 'unclaimed-rewards', usd: 'unclaimed-rewards-usd' },
+                { eth: 'total-claimable', usd: 'total-claimable-usd' },
+            ];
+
+            fields.forEach(({ eth, usd }) => {
+                const ethEl = document.getElementById(eth);
+                const usdEl = document.getElementById(usd);
+                if (ethEl && usdEl) {
+                    const ethVal = parseFloat(ethEl.textContent);
+                    usdEl.textContent = formatUsd(ethVal);
+                }
+            });
+        }
+
+        // Fetch ETH price on page load
+        fetchEthPrice();
         const loadHistoryBtn = document.getElementById('load-history-btn');
         const historyLoading = document.getElementById('history-loading');
         const historyTable = document.getElementById('history-table');
@@ -487,6 +570,9 @@ def create_app() -> FastAPI:
             document.getElementById('distributed-rewards').textContent = parseFloat(data.rewards?.distributed_eth ?? 0).toFixed(6);
             document.getElementById('unclaimed-rewards').textContent = parseFloat(data.rewards?.unclaimed_eth ?? 0).toFixed(6);
             document.getElementById('total-claimable').textContent = parseFloat(data.rewards?.total_claimable_eth ?? 0).toFixed(6);
+
+            // Update USD equivalents
+            updateUsdDisplays();
 
             results.classList.remove('hidden');
 
@@ -1136,6 +1222,7 @@ def create_app() -> FastAPI:
         // Render a single saved operator card
         function renderSavedOperatorCard(op) {
             const claimable = parseFloat(op.rewards?.total_claimable_eth ?? 0).toFixed(4);
+            const claimableUsd = formatUsd(claimable);
             const validators = op.validators?.active ?? 0;
             const updatedAt = op._updated_at ? formatRelativeTime(op._updated_at) : 'unknown';
 
@@ -1159,7 +1246,7 @@ def create_app() -> FastAPI:
                         </div>
                         <div class="text-sm text-gray-400">
                             <span class="text-green-400">${validators}</span> active validators |
-                            <span class="text-yellow-400">${claimable} ETH</span> claimable
+                            <span class="text-yellow-400">${claimable} ETH</span>${claimableUsd ? ` <span class="text-gray-500">(${claimableUsd})</span>` : ''} claimable
                         </div>
                     </div>
                     <div class="flex gap-2">
@@ -1178,6 +1265,14 @@ def create_app() -> FastAPI:
                     </div>
                 </div>
             `;
+        }
+
+        // Re-render saved operator cards (called when ETH price updates)
+        function rerenderSavedOperators() {
+            if (Object.keys(savedOperatorsData).length > 0) {
+                const operators = Object.values(savedOperatorsData);
+                savedOperatorsList.innerHTML = operators.map(renderSavedOperatorCard).join('');
+            }
         }
 
         // Load saved operators on page load
@@ -1226,7 +1321,7 @@ def create_app() -> FastAPI:
         // Refresh a saved operator
         window.refreshSavedOperator = async function(operatorId, btn) {
             const originalText = btn.textContent;
-            btn.textContent = '...';
+            btn.innerHTML = '<span class="inline-block animate-spin">&#8635;</span>';
             btn.disabled = true;
 
             try {
@@ -1244,7 +1339,7 @@ def create_app() -> FastAPI:
             } catch (err) {
                 console.error('Failed to refresh operator:', err);
             } finally {
-                btn.textContent = originalText;
+                btn.innerHTML = originalText;
                 btn.disabled = false;
             }
         };
@@ -1252,7 +1347,7 @@ def create_app() -> FastAPI:
         // Remove a saved operator
         window.removeSavedOperator = async function(operatorId, btn) {
             const originalText = btn.textContent;
-            btn.textContent = '...';
+            btn.innerHTML = '<span class="inline-block animate-spin">&#8635;</span>';
             btn.disabled = true;
 
             try {
@@ -1276,7 +1371,7 @@ def create_app() -> FastAPI:
                 }
             } catch (err) {
                 console.error('Failed to remove operator:', err);
-                btn.textContent = originalText;
+                btn.innerHTML = originalText;
                 btn.disabled = false;
             }
         };
@@ -1284,11 +1379,16 @@ def create_app() -> FastAPI:
         // Refresh all saved operators
         refreshAllBtn.addEventListener('click', async () => {
             const originalText = refreshAllBtn.textContent;
-            refreshAllBtn.textContent = 'Refreshing...';
             refreshAllBtn.disabled = true;
 
             const cards = savedOperatorsList.querySelectorAll('[data-operator-id]');
+            const total = cards.length;
+            let current = 0;
+
             for (const card of cards) {
+                current++;
+                refreshAllBtn.innerHTML = `<span class="inline-block animate-spin mr-1">&#8635;</span> ${current}/${total}`;
+
                 const operatorId = card.dataset.operatorId;
                 try {
                     const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST' });
@@ -1305,7 +1405,7 @@ def create_app() -> FastAPI:
                 }
             }
 
-            refreshAllBtn.textContent = originalText;
+            refreshAllBtn.innerHTML = originalText;
             refreshAllBtn.disabled = false;
         });
 
@@ -1340,7 +1440,7 @@ def create_app() -> FastAPI:
             if (!operatorId) return;
 
             saveOperatorBtn.disabled = true;
-            saveOperatorBtn.textContent = '...';
+            saveOperatorBtn.innerHTML = '<span class="inline-block animate-spin">&#8635;</span>';
 
             try {
                 if (currentOperatorSaved) {

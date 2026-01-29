@@ -13,6 +13,7 @@ from ..data.database import (
     save_operator,
     update_operator_data,
 )
+from ..data.price import get_eth_price
 from ..services.operator_service import OperatorService
 
 router = APIRouter()
@@ -594,3 +595,12 @@ async def health_check():
     """Health check endpoint."""
     logger.debug("Health check called")
     return {"status": "healthy"}
+
+
+@router.get("/price/eth")
+async def get_eth_price_endpoint():
+    """Get current ETH price in USD from CoinGecko."""
+    price = await get_eth_price()
+    if price is None:
+        return {"price": None, "error": "Failed to fetch price"}
+    return {"price": price, "currency": "USD"}
