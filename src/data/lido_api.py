@@ -1,9 +1,13 @@
 """Lido protocol API for stETH APR and other metrics."""
 
+import logging
+
 import httpx
 
 from ..core.config import get_settings
 from .cache import cached
+
+logger = logging.getLogger(__name__)
 
 LIDO_API_BASE = "https://eth-api.lido.fi/v1"
 LIDO_SUBGRAPH_ID = "Sxx812XgeKyzQPaBpR5YZWmGV5fZuBaPdh7DFhzSwiQ"
@@ -27,12 +31,14 @@ class LidoAPIProvider:
 
                 if response.status_code == 200:
                     data = response.json()
+                    # Handle case where data["data"] could be explicitly None
+                    data_obj = data.get("data") or {}
                     return {
-                        "apr": float(data.get("data", {}).get("smaApr", 0)),
-                        "timestamp": data.get("data", {}).get("timeUnix"),
+                        "apr": float(data_obj.get("smaApr", 0) or 0),
+                        "timestamp": data_obj.get("timeUnix"),
                     }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to fetch stETH APR from Lido API: {e}")
 
         return {"apr": None, "timestamp": None}
 
@@ -73,8 +79,8 @@ class LidoAPIProvider:
                     results = data.get("data", {}).get("totalRewards", [])
                     # Reverse to get ascending order (oldest to newest) for binary search
                     return list(reversed(results))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to fetch historical APR from TheGraph: {e}")
 
         return []
 
@@ -89,13 +95,21 @@ class LidoAPIProvider:
         # Find the closest report at or before target_block
         closest = None
         for entry in apr_data:
-            block = int(entry["block"])
+            try:
+                block = int(entry.get("block", 0))
+            except (ValueError, TypeError):
+                continue
             if block <= target_block:
                 closest = entry
             else:
                 break  # apr_data is sorted ascending
 
-        return float(closest["apr"]) if closest else None
+        if closest:
+            try:
+                return float(closest.get("apr", 0))
+            except (ValueError, TypeError):
+                return None
+        return None
 
     def get_average_apr_for_range(
         self, apr_data: list[dict], start_timestamp: int, end_timestamp: int
@@ -121,7 +135,10 @@ class LidoAPIProvider:
         closest_before = None
 
         for entry in apr_data:
-            block_time = int(entry["blockTime"])
+            try:
+                block_time = int(entry.get("blockTime", 0))
+            except (ValueError, TypeError):
+                continue
             if block_time < start_timestamp:
                 closest_before = entry  # Keep track of most recent before range
             elif block_time <= end_timestamp:
@@ -131,10 +148,19 @@ class LidoAPIProvider:
 
         if reports_in_range:
             # Average all reports within the range
-            total_apr = sum(float(r["apr"]) for r in reports_in_range)
-            return total_apr / len(reports_in_range)
+            valid_aprs = []
+            for r in reports_in_range:
+                try:
+                    valid_aprs.append(float(r.get("apr", 0)))
+                except (ValueError, TypeError):
+                    continue
+            if valid_aprs:
+                return sum(valid_aprs) / len(valid_aprs)
         elif closest_before:
             # No reports in range, use the closest one before
-            return float(closest_before["apr"])
+            try:
+                return float(closest_before.get("apr", 0))
+            except (ValueError, TypeError):
+                pass
 
         return None
