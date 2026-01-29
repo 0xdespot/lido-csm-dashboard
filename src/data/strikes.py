@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,8 @@ from web3 import Web3
 
 from ..core.config import get_settings
 from .cache import cached
+
+logger = logging.getLogger(__name__)
 
 
 # Strike thresholds by operator type (curve_id)
@@ -26,6 +29,8 @@ DEFAULT_STRIKE_THRESHOLD = 3
 
 def get_strike_threshold(curve_id: int) -> int:
     """Get the strike threshold for ejection based on operator curve_id."""
+    if curve_id not in STRIKE_THRESHOLDS:
+        logger.warning(f"Unknown curve_id {curve_id}, defaulting to strike threshold {DEFAULT_STRIKE_THRESHOLD}")
     return STRIKE_THRESHOLDS.get(curve_id, DEFAULT_STRIKE_THRESHOLD)
 
 
@@ -43,13 +48,6 @@ class ValidatorStrikes:
 class StrikesProvider:
     """Fetches strikes data from CSStrikes contract via IPFS."""
 
-    # IPFS gateways to try in order (same as ipfs_logs.py)
-    GATEWAYS = [
-        "https://dweb.link/ipfs/",
-        "https://ipfs.io/ipfs/",
-        "https://cloudflare-ipfs.com/ipfs/",
-    ]
-
     # Rate limiting: minimum seconds between gateway requests
     MIN_REQUEST_INTERVAL = 1.0
 
@@ -66,6 +64,8 @@ class StrikesProvider:
 
     def __init__(self, rpc_url: str | None = None, cache_dir: Path | None = None):
         self.settings = get_settings()
+        # Use configurable gateways from settings (comma-separated)
+        self.gateways = [g.strip() for g in self.settings.ipfs_gateways.split(",") if g.strip()]
         self.w3 = Web3(Web3.HTTPProvider(rpc_url or self.settings.eth_rpc_url))
         self.cache_dir = cache_dir or Path.home() / ".cache" / "csm-dashboard" / "strikes"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -128,18 +128,24 @@ class StrikesProvider:
 
         # Try each gateway
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            for gateway in self.GATEWAYS:
+            for gateway in self.gateways:
                 try:
                     url = f"{gateway}{cid}"
                     response = await client.get(url)
                     if response.status_code == 200:
-                        data = response.json()
+                        try:
+                            data = response.json()
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse strikes tree JSON from {gateway}: {e}")
+                            continue
                         # Cache the successful result
                         self._save_to_cache(cid, data)
                         return data
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"IPFS gateway {gateway} failed for strikes CID {cid}: {e}")
                     continue
 
+        logger.warning(f"All IPFS gateways failed for strikes CID {cid}")
         return None
 
     @cached(ttl=300)  # Cache parsed tree for 5 minutes
@@ -192,11 +198,25 @@ class StrikesProvider:
             pubkey = value[1]
             strikes_array = value[2]
 
+            # Validate types - operator_id must be an int
+            if not isinstance(entry_operator_id, int):
+                try:
+                    entry_operator_id = int(entry_operator_id)
+                except (ValueError, TypeError):
+                    continue
+
             if entry_operator_id != operator_id:
                 continue
 
-            # Count total strikes (sum of the 6-frame array)
-            strike_count = sum(strikes_array) if isinstance(strikes_array, list) else 0
+            # Ensure pubkey is a string
+            if not isinstance(pubkey, str):
+                pubkey = str(pubkey) if pubkey else ""
+
+            # Count total strikes (sum of the 6-frame array), filtering non-numeric values
+            if isinstance(strikes_array, list):
+                strike_count = sum(s for s in strikes_array if isinstance(s, (int, float)))
+            else:
+                strike_count = 0
 
             operator_strikes.append(
                 ValidatorStrikes(
