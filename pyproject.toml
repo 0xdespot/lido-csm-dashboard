@@ -1,6 +1,6 @@
 [project]
 name = "csm-dashboard"
-version = "0.3.6"
+version = "0.3.6.1"
 description = "Lido CSM Operator Dashboard for tracking validator earnings"
 readme = "README.md"
 requires-python = ">=3.11"
