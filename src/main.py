@@ -1,8 +1,16 @@
 """Main entry point for the CSM Dashboard application."""
 
+import logging
+
 import typer
 
 from .cli.commands import app as cli_app
+
+# Configure root logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 # Create main app that includes all CLI commands
 app = typer.Typer(
@@ -25,6 +33,9 @@ def serve(
 
     from .web.app import create_app
 
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting CSM Dashboard server on {host}:{port}")
+
     web_app = create_app()
     uvicorn.run(
         web_app if not reload else "src.web.app:create_app",
@@ -32,6 +43,7 @@ def serve(
         port=port,
         reload=reload,
         factory=reload,
+        log_level="info",
     )
 
 

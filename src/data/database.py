@@ -1,12 +1,15 @@
 """SQLite database for persisting saved operators."""
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
 import aiosqlite
 
 from ..core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 _db_initialized = False
 
@@ -16,6 +19,7 @@ async def get_db_path() -> Path:
     settings = get_settings()
     db_path = settings.database_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.debug(f"Database path: {db_path}")
     return db_path
 
 
@@ -23,8 +27,10 @@ async def init_db() -> None:
     """Initialize the database schema."""
     global _db_initialized
     if _db_initialized:
+        logger.debug("Database already initialized")
         return
 
+    logger.info("Initializing database schema")
     db_path = await get_db_path()
     async with aiosqlite.connect(db_path) as db:
         await db.execute("""
@@ -39,6 +45,7 @@ async def init_db() -> None:
         """)
         await db.commit()
     _db_initialized = True
+    logger.info("Database initialized successfully")
 
 
 async def save_operator(operator_id: int, data: dict) -> None:
@@ -76,6 +83,7 @@ async def get_saved_operators() -> list[dict]:
         List of operator data dictionaries with added metadata (saved_at, updated_at)
     """
     try:
+        logger.debug("Getting saved operators from database")
         await init_db()
         db_path = await get_db_path()
 
@@ -96,12 +104,13 @@ async def get_saved_operators() -> list[dict]:
                 data["_updated_at"] = row["updated_at"]
                 result.append(data)
             except json.JSONDecodeError:
-                # Skip corrupted entries
+                logger.warning(f"Corrupted JSON for operator {row['operator_id']}, skipping")
                 continue
 
+        logger.debug(f"Retrieved {len(result)} saved operators from database")
         return result
     except Exception as e:
-        print(f"Database error in get_saved_operators: {e}")
+        logger.error(f"Database error in get_saved_operators: {e}", exc_info=True)
         return []
 
 

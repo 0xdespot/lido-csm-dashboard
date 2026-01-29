@@ -1,6 +1,10 @@
 """API endpoints for the web interface."""
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query
+
+logger = logging.getLogger(__name__)
 
 from ..data.database import (
     delete_operator,
@@ -30,6 +34,7 @@ async def get_operator(
     - Add ?history=true to include all historical distribution frames
     - Add ?withdrawals=true to include withdrawal/claim history
     """
+    logger.info(f"Get operator: {identifier}, detailed={detailed}, history={history}, withdrawals={withdrawals}")
     service = OperatorService()
 
     # Determine if this is an ID or address
@@ -250,12 +255,13 @@ async def get_operator_strikes(identifier: str):
 @router.get("/saved-operators")
 async def list_saved_operators():
     """Get all saved operators with their cached data."""
+    logger.info("Loading saved operators from database")
     try:
         operators = await get_saved_operators()
+        logger.info(f"Loaded {len(operators)} saved operators")
         return {"operators": operators}
     except Exception as e:
-        # Log the error and return empty list instead of crashing
-        print(f"Error loading saved operators: {e}")
+        logger.error(f"Error loading saved operators: {e}", exc_info=True)
         return {"operators": [], "error": str(e)}
 
 
@@ -572,4 +578,5 @@ async def refresh_operator_endpoint(identifier: str):
 @router.get("/health")
 async def health_check():
     """Health check endpoint."""
+    logger.debug("Health check called")
     return {"status": "healthy"}

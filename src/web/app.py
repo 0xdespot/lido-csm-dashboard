@@ -25,6 +25,18 @@ def create_app() -> FastAPI:
         version="0.3.6.1",
     )
 
+    # Add request logging middleware
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        logger.info(f"Request: {request.method} {request.url.path}")
+        try:
+            response = await call_next(request)
+            logger.info(f"Response: {request.method} {request.url.path} -> {response.status_code}")
+            return response
+        except Exception as e:
+            logger.error(f"Request failed: {request.method} {request.url.path} -> {e}")
+            raise
+
     app.include_router(router, prefix="/api")
 
     # Mount static files for favicon and images
@@ -32,8 +44,17 @@ def create_app() -> FastAPI:
     if img_dir.exists():
         app.mount("/img", StaticFiles(directory=str(img_dir)), name="img")
 
+    @app.on_event("startup")
+    async def startup_event():
+        logger.info("CSM Dashboard starting up")
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        logger.info("CSM Dashboard shutting down")
+
     @app.get("/", response_class=HTMLResponse)
     async def index():
+        logger.debug("Serving index page")
         return """
 <!DOCTYPE html>
 <html>
