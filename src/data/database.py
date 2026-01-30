@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 _db_initialized = False
 
+# Database connection timeout in seconds (prevents hanging on locks)
+DB_TIMEOUT = 5.0
+
 
 async def get_db_path() -> Path:
     """Get the database file path, creating parent directories if needed."""
@@ -32,7 +35,9 @@ async def init_db() -> None:
 
     logger.info("Initializing database schema")
     db_path = await get_db_path()
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
+        # Enable WAL mode for better concurrent access
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS saved_operators (
                 operator_id INTEGER PRIMARY KEY,
@@ -63,7 +68,7 @@ async def save_operator(operator_id: int, data: dict) -> None:
     data_json = json.dumps(data)
     now = datetime.utcnow().isoformat()
 
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
         await db.execute("""
             INSERT INTO saved_operators (operator_id, manager_address, reward_address, data_json, saved_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -87,7 +92,7 @@ async def get_saved_operators() -> list[dict]:
         await init_db()
         db_path = await get_db_path()
 
-        async with aiosqlite.connect(db_path) as db:
+        async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
                 SELECT operator_id, data_json, saved_at, updated_at
@@ -126,7 +131,7 @@ async def delete_operator(operator_id: int) -> bool:
     await init_db()
     db_path = await get_db_path()
 
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
         cursor = await db.execute(
             "DELETE FROM saved_operators WHERE operator_id = ?",
             (operator_id,)
@@ -147,7 +152,7 @@ async def is_operator_saved(operator_id: int) -> bool:
     await init_db()
     db_path = await get_db_path()
 
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
         async with db.execute(
             "SELECT 1 FROM saved_operators WHERE operator_id = ?",
             (operator_id,)
@@ -174,7 +179,7 @@ async def update_operator_data(operator_id: int, data: dict) -> bool:
     data_json = json.dumps(data)
     now = datetime.utcnow().isoformat()
 
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
         cursor = await db.execute("""
             UPDATE saved_operators
             SET manager_address = ?, reward_address = ?, data_json = ?, updated_at = ?
