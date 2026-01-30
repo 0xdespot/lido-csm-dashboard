@@ -1,6 +1,7 @@
 """Configuration management using pydantic-settings."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -31,6 +32,8 @@ class Settings(BaseSettings):
     # Cache Settings
     cache_ttl_seconds: int = 300  # 5 minutes
 
+    # Database Settings
+    database_path: Path = Path.home() / ".cache" / "csm-dashboard" / "operators.db"
     # IPFS Gateway Configuration (comma-separated list)
     # Default: dweb.link (IPFS Foundation), ipfs.io, w3s.link (web3.storage)
     ipfs_gateways: str = "https://dweb.link/ipfs/,https://ipfs.io/ipfs/,https://w3s.link/ipfs/"

@@ -30,6 +30,8 @@ services:
     
     # Restart policy
     restart: unless-stopped
+    volumes:
+      - ./dashboard-data/:/root/.cache/csm-dashboard/
     
     # Logging configuration
     logging:
