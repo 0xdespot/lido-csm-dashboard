@@ -2,6 +2,7 @@
 
 import asyncio
 from decimal import Decimal
+from functools import partial
 
 from web3 import Web3
 
@@ -51,12 +52,16 @@ class OnChainDataProvider:
     @cached(ttl=60)
     async def get_node_operators_count(self) -> int:
         """Get total number of node operators."""
-        return self.csmodule.functions.getNodeOperatorsCount().call()
+        return await asyncio.to_thread(
+            self.csmodule.functions.getNodeOperatorsCount().call
+        )
 
     @cached(ttl=300)
     async def get_node_operator(self, operator_id: int) -> NodeOperator:
         """Get node operator data by ID."""
-        data = self.csmodule.functions.getNodeOperator(operator_id).call()
+        data = await asyncio.to_thread(
+            self.csmodule.functions.getNodeOperator(operator_id).call
+        )
         return NodeOperator(
             node_operator_id=operator_id,
             total_added_keys=data[0],
@@ -95,10 +100,13 @@ class OnChainDataProvider:
 
             if batch_supported:
                 try:
-                    with self.w3.batch_requests() as batch:
-                        for op_id in range(start, end):
-                            batch.add(self.csmodule.functions.getNodeOperator(op_id))
-                        results = batch.execute()
+                    def run_batch():
+                        with self.w3.batch_requests() as batch:
+                            for op_id in range(start, end):
+                                batch.add(self.csmodule.functions.getNodeOperator(op_id))
+                            return batch.execute()
+
+                    results = await asyncio.to_thread(run_batch)
 
                     for i, data in enumerate(results):
                         op_id = start + i
@@ -114,7 +122,9 @@ class OnChainDataProvider:
             # Sequential fallback with rate limiting
             for op_id in range(start, end):
                 try:
-                    data = self.csmodule.functions.getNodeOperator(op_id).call()
+                    data = await asyncio.to_thread(
+                        self.csmodule.functions.getNodeOperator(op_id).call
+                    )
                     manager = data[10]
                     reward = data[12]
                     if manager.lower() == address.lower() or reward.lower() == address.lower():
@@ -136,7 +146,9 @@ class OnChainDataProvider:
             1 = ICS/Legacy EA (1.5 ETH first validator, 1.3 ETH subsequent)
         """
         try:
-            return self.csaccounting.functions.getBondCurveId(operator_id).call()
+            return await asyncio.to_thread(
+                self.csaccounting.functions.getBondCurveId(operator_id).call
+            )
         except Exception:
             # Fall back to 0 (Permissionless) if call fails
             return 0
@@ -205,9 +217,9 @@ class OnChainDataProvider:
     @cached(ttl=60)
     async def get_bond_summary(self, operator_id: int) -> BondSummary:
         """Get bond summary for an operator."""
-        current, required = self.csaccounting.functions.getBondSummary(
-            operator_id
-        ).call()
+        current, required = await asyncio.to_thread(
+            self.csaccounting.functions.getBondSummary(operator_id).call
+        )
 
         current_eth = Decimal(current) / Decimal(10**18)
         required_eth = Decimal(required) / Decimal(10**18)
@@ -224,14 +236,18 @@ class OnChainDataProvider:
     @cached(ttl=60)
     async def get_distributed_shares(self, operator_id: int) -> int:
         """Get already distributed (claimed) shares for operator."""
-        return self.csfeedistributor.functions.distributedShares(operator_id).call()
+        return await asyncio.to_thread(
+            self.csfeedistributor.functions.distributedShares(operator_id).call
+        )
 
     @cached(ttl=60)
     async def shares_to_eth(self, shares: int) -> Decimal:
         """Convert stETH shares to ETH value."""
         if shares == 0:
             return Decimal(0)
-        eth_wei = self.steth.functions.getPooledEthByShares(shares).call()
+        eth_wei = await asyncio.to_thread(
+            self.steth.functions.getPooledEthByShares(shares).call
+        )
         return Decimal(eth_wei) / Decimal(10**18)
 
     async def get_signing_keys(
@@ -246,9 +262,11 @@ class OnChainDataProvider:
 
         for batch_start in range(start, start + count, batch_size):
             batch_count = min(batch_size, start + count - batch_start)
-            keys_bytes = self.csmodule.functions.getSigningKeys(
-                operator_id, batch_start, batch_count
-            ).call()
+            keys_bytes = await asyncio.to_thread(
+                self.csmodule.functions.getSigningKeys(
+                    operator_id, batch_start, batch_count
+                ).call
+            )
             # Each key is 48 bytes
             for i in range(0, len(keys_bytes), 48):
                 key = "0x" + keys_bytes[i : i + 48].hex()
@@ -256,9 +274,11 @@ class OnChainDataProvider:
 
         return keys
 
-    def get_current_log_cid(self) -> str:
+    async def get_current_log_cid(self) -> str:
         """Get the current distribution log CID from the contract."""
-        return self.csfeedistributor.functions.logCid().call()
+        return await asyncio.to_thread(
+            self.csfeedistributor.functions.logCid().call
+        )
 
     @cached(ttl=3600)  # Cache for 1 hour since historical events don't change
     async def get_distribution_log_history(
@@ -304,9 +324,11 @@ class OnChainDataProvider:
 
         # 4. Ultimate fallback: current logCid only
         try:
-            current_cid = self.get_current_log_cid()
+            current_cid = await self.get_current_log_cid()
             if current_cid:
-                current_block = self.w3.eth.block_number
+                current_block = await asyncio.to_thread(
+                    lambda: self.w3.eth.block_number
+                )
                 return [{"block": current_block, "logCid": current_cid}]
         except Exception:
             pass
@@ -317,15 +339,18 @@ class OnChainDataProvider:
         self, start_block: int, chunk_size: int = 10000
     ) -> list[dict]:
         """Query events in smaller chunks to work around RPC limitations."""
-        current_block = self.w3.eth.block_number
+        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
         all_events = []
 
         for from_block in range(start_block, current_block, chunk_size):
             to_block = min(from_block + chunk_size - 1, current_block)
             try:
-                events = self.csfeedistributor.events.DistributionLogUpdated.get_logs(
-                    from_block=from_block,
-                    to_block=to_block,
+                events = await asyncio.to_thread(
+                    partial(
+                        self.csfeedistributor.events.DistributionLogUpdated.get_logs,
+                        from_block=from_block,
+                        to_block=to_block,
+                    )
                 )
                 for e in events:
                     all_events.append(
@@ -443,7 +468,7 @@ class OnChainDataProvider:
         chunk_size: int = 10000,
     ) -> list[dict]:
         """Query WithdrawalRequested events in chunks via RPC."""
-        current_block = self.w3.eth.block_number
+        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
         all_events = []
 
         requestor = Web3.to_checksum_address(requestor)
@@ -452,13 +477,16 @@ class OnChainDataProvider:
         for from_blk in range(start_block, current_block, chunk_size):
             to_blk = min(from_blk + chunk_size - 1, current_block)
             try:
-                events = self.withdrawal_queue.events.WithdrawalRequested.get_logs(
-                    from_block=from_blk,
-                    to_block=to_blk,
-                    argument_filters={
-                        "requestor": requestor,
-                        "owner": owner,
-                    },
+                events = await asyncio.to_thread(
+                    partial(
+                        self.withdrawal_queue.events.WithdrawalRequested.get_logs,
+                        from_block=from_blk,
+                        to_block=to_blk,
+                        argument_filters={
+                            "requestor": requestor,
+                            "owner": owner,
+                        },
+                    )
                 )
                 for e in events:
                     all_events.append(
@@ -488,9 +516,9 @@ class OnChainDataProvider:
         # Get status for all request IDs
         request_ids = [e["request_id"] for e in events]
         try:
-            statuses = self.withdrawal_queue.functions.getWithdrawalStatus(
-                request_ids
-            ).call()
+            statuses = await asyncio.to_thread(
+                self.withdrawal_queue.functions.getWithdrawalStatus(request_ids).call
+            )
         except Exception:
             # If status query fails, set all as unknown
             statuses = [None] * len(events)
@@ -503,7 +531,9 @@ class OnChainDataProvider:
         for i, event in enumerate(events):
             try:
                 # Get block timestamp
-                block = self.w3.eth.get_block(event["block"])
+                block = await asyncio.to_thread(
+                    partial(self.w3.eth.get_block, event["block"])
+                )
                 timestamp = datetime.fromtimestamp(
                     block["timestamp"], tz=timezone.utc
                 ).isoformat()
@@ -542,7 +572,9 @@ class OnChainDataProvider:
                     enriched_event["claim_tx_hash"] = claim["tx_hash"]
                     # Get claim timestamp
                     try:
-                        claim_block = self.w3.eth.get_block(claim["block"])
+                        claim_block = await asyncio.to_thread(
+                            partial(self.w3.eth.get_block, claim["block"])
+                        )
                         enriched_event["claim_timestamp"] = datetime.fromtimestamp(
                             claim_block["timestamp"], tz=timezone.utc
                         ).isoformat()
@@ -573,16 +605,19 @@ class OnChainDataProvider:
                 return events
 
         # RPC fallback - query in chunks
-        current_block = self.w3.eth.block_number
+        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
         all_events = []
 
         for from_blk in range(start_block, current_block, 10000):
             to_blk = min(from_blk + 9999, current_block)
             try:
-                logs = self.withdrawal_queue.events.WithdrawalClaimed.get_logs(
-                    from_block=from_blk,
-                    to_block=to_blk,
-                    argument_filters={"receiver": receiver},
+                logs = await asyncio.to_thread(
+                    partial(
+                        self.withdrawal_queue.events.WithdrawalClaimed.get_logs,
+                        from_block=from_blk,
+                        to_block=to_blk,
+                        argument_filters={"receiver": receiver},
+                    )
                 )
                 for e in logs:
                     all_events.append(
@@ -606,7 +641,7 @@ class OnChainDataProvider:
         chunk_size: int = 10000,
     ) -> list[dict]:
         """Query Transfer events in smaller chunks."""
-        current_block = self.w3.eth.block_number
+        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
         all_events = []
 
         from_address = Web3.to_checksum_address(from_address)
@@ -615,13 +650,16 @@ class OnChainDataProvider:
         for from_blk in range(start_block, current_block, chunk_size):
             to_blk = min(from_blk + chunk_size - 1, current_block)
             try:
-                events = self.steth.events.Transfer.get_logs(
-                    from_block=from_blk,
-                    to_block=to_blk,
-                    argument_filters={
-                        "from": from_address,
-                        "to": to_address,
-                    },
+                events = await asyncio.to_thread(
+                    partial(
+                        self.steth.events.Transfer.get_logs,
+                        from_block=from_blk,
+                        to_block=to_blk,
+                        argument_filters={
+                            "from": from_address,
+                            "to": to_address,
+                        },
+                    )
                 )
                 for e in events:
                     all_events.append(
@@ -645,7 +683,9 @@ class OnChainDataProvider:
         for event in events:
             try:
                 # Get block timestamp
-                block = self.w3.eth.get_block(event["block"])
+                block = await asyncio.to_thread(
+                    partial(self.w3.eth.get_block, event["block"])
+                )
                 timestamp = datetime.fromtimestamp(
                     block["timestamp"], tz=timezone.utc
                 ).isoformat()
