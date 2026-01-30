@@ -428,13 +428,24 @@ def create_app() -> FastAPI:
         const healthSection = document.getElementById('health-section');
         const historySection = document.getElementById('history-section');
 
+        // Global abort controller for canceling requests on page unload
+        let pageAbortController = new AbortController();
+        window.addEventListener('beforeunload', () => {
+            pageAbortController.abort();
+        });
+
+        // Helper to check if error is from abort (page unload)
+        function isAbortError(err) {
+            return err.name === 'AbortError';
+        }
+
         // ETH price state
         let ethPriceUsd = null;
 
         // Fetch ETH price from CoinGecko via our API
         async function fetchEthPrice() {
             try {
-                const response = await fetch('/api/price/eth');
+                const response = await fetch('/api/price/eth', { signal: pageAbortController.signal });
                 const data = await response.json();
                 if (data.price) {
                     ethPriceUsd = data.price;
@@ -448,7 +459,9 @@ def create_app() -> FastAPI:
                     }
                 }
             } catch (err) {
-                console.error('Failed to fetch ETH price:', err);
+                if (!isAbortError(err)) {
+                    console.error('Failed to fetch ETH price:', err);
+                }
             }
         }
 
@@ -765,7 +778,7 @@ def create_app() -> FastAPI:
             resetUI();
 
             try {
-                const response = await fetch(`/api/operator/${input}`);
+                const response = await fetch(`/api/operator/${input}`, { signal: pageAbortController.signal });
                 const data = await response.json();
 
                 loading.classList.add('hidden');
@@ -778,6 +791,7 @@ def create_app() -> FastAPI:
 
                 displayOperatorData(data);
             } catch (err) {
+                if (isAbortError(err)) return;  // Page is unloading, ignore
                 loading.classList.add('hidden');
                 error.classList.remove('hidden');
                 errorMessage.textContent = err.message || 'Network error';
@@ -797,7 +811,7 @@ def create_app() -> FastAPI:
             detailsLoading.classList.remove('hidden');
 
             try {
-                const response = await fetch(`/api/operator/${operatorId}?detailed=true`);
+                const response = await fetch(`/api/operator/${operatorId}?detailed=true`, { signal: pageAbortController.signal });
                 const data = await response.json();
 
                 detailsLoading.classList.add('hidden');
@@ -928,7 +942,7 @@ def create_app() -> FastAPI:
                             strikesList.classList.remove('hidden');
                             try {
                                 const opId = document.getElementById('operator-id').textContent;
-                                const strikesResp = await fetch(`/api/operator/${opId}/strikes`);
+                                const strikesResp = await fetch(`/api/operator/${opId}/strikes`, { signal: pageAbortController.signal });
                                 const strikesData = await strikesResp.json();
                                 const threshold = strikesData.strike_threshold || 3;
                                 strikesList.innerHTML = strikesData.validators.map(v => {
@@ -962,6 +976,7 @@ def create_app() -> FastAPI:
                                 strikesLoaded = true;
                                 toggleStrikesBtn.textContent = 'Hide validator details ▲';
                             } catch (err) {
+                                if (isAbortError(err)) return;  // Page is unloading, ignore
                                 strikesList.innerHTML = '<div class="text-red-400">Failed to load strikes</div>';
                             }
                         };
@@ -1021,6 +1036,7 @@ def create_app() -> FastAPI:
                     healthSection.classList.remove('hidden');
                 }
             } catch (err) {
+                if (isAbortError(err)) return;  // Page is unloading, ignore
                 detailsLoading.classList.add('hidden');
                 loadDetailsBtn.classList.remove('hidden');
                 loadDetailsBtn.textContent = 'Failed - Click to Retry';
@@ -1044,7 +1060,7 @@ def create_app() -> FastAPI:
             historyTable.classList.add('hidden');
 
             try {
-                const response = await fetch(`/api/operator/${operatorId}?detailed=true&history=true`);
+                const response = await fetch(`/api/operator/${operatorId}?detailed=true&history=true`, { signal: pageAbortController.signal });
                 const data = await response.json();
 
                 historyLoading.classList.add('hidden');
@@ -1082,6 +1098,7 @@ def create_app() -> FastAPI:
                 historyLoaded = true;
                 loadHistoryBtn.textContent = 'Hide History';
             } catch (err) {
+                if (isAbortError(err)) return;  // Page is unloading, ignore
                 historyLoading.classList.add('hidden');
                 historyTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-red-400">Failed to load history</td></tr>';
                 historyTable.classList.remove('hidden');
@@ -1103,7 +1120,7 @@ def create_app() -> FastAPI:
             withdrawalTable.classList.add('hidden');
 
             try {
-                const response = await fetch(`/api/operator/${operatorId}?withdrawals=true`);
+                const response = await fetch(`/api/operator/${operatorId}?withdrawals=true`, { signal: pageAbortController.signal });
                 const data = await response.json();
 
                 withdrawalLoading.classList.add('hidden');
@@ -1178,6 +1195,7 @@ def create_app() -> FastAPI:
                 withdrawalsLoaded = true;
                 loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
             } catch (err) {
+                if (isAbortError(err)) return;  // Page is unloading, ignore
                 withdrawalLoading.classList.add('hidden');
                 withdrawalTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-red-400">Failed to load withdrawals</td></tr>';
                 withdrawalTable.classList.remove('hidden');
@@ -1278,7 +1296,7 @@ def create_app() -> FastAPI:
         // Load saved operators on page load
         async function loadSavedOperators() {
             try {
-                const response = await fetch('/api/saved-operators');
+                const response = await fetch('/api/saved-operators', { signal: pageAbortController.signal });
                 const data = await response.json();
 
                 if (data.operators && data.operators.length > 0) {
@@ -1294,7 +1312,9 @@ def create_app() -> FastAPI:
                     savedOperatorsSection.classList.add('hidden');
                 }
             } catch (err) {
-                console.error('Failed to load saved operators:', err);
+                if (!isAbortError(err)) {
+                    console.error('Failed to load saved operators:', err);
+                }
             }
         }
 
@@ -1325,7 +1345,7 @@ def create_app() -> FastAPI:
             btn.disabled = true;
 
             try {
-                const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST' });
+                const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST', signal: pageAbortController.signal });
                 if (response.ok) {
                     const data = await response.json();
                     // Update the card in the list and stored data
@@ -1337,7 +1357,9 @@ def create_app() -> FastAPI:
                     }
                 }
             } catch (err) {
-                console.error('Failed to refresh operator:', err);
+                if (!isAbortError(err)) {
+                    console.error('Failed to refresh operator:', err);
+                }
             } finally {
                 btn.innerHTML = originalText;
                 btn.disabled = false;
@@ -1351,7 +1373,7 @@ def create_app() -> FastAPI:
             btn.disabled = true;
 
             try {
-                const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE' });
+                const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE', signal: pageAbortController.signal });
                 if (response.ok) {
                     delete savedOperatorsData[operatorId];  // Remove from stored data
                     const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
@@ -1370,9 +1392,11 @@ def create_app() -> FastAPI:
                     }
                 }
             } catch (err) {
-                console.error('Failed to remove operator:', err);
-                btn.innerHTML = originalText;
-                btn.disabled = false;
+                if (!isAbortError(err)) {
+                    console.error('Failed to remove operator:', err);
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
             }
         };
 
@@ -1391,7 +1415,7 @@ def create_app() -> FastAPI:
 
                 const operatorId = card.dataset.operatorId;
                 try {
-                    const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST' });
+                    const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST', signal: pageAbortController.signal });
                     if (response.ok) {
                         const data = await response.json();
                         if (data.data) {
@@ -1401,6 +1425,7 @@ def create_app() -> FastAPI:
                         }
                     }
                 } catch (err) {
+                    if (isAbortError(err)) break;  // Page is unloading, stop loop
                     console.error(`Failed to refresh operator ${operatorId}:`, err);
                 }
             }
@@ -1425,12 +1450,14 @@ def create_app() -> FastAPI:
         // Check if current operator is saved
         async function checkIfOperatorSaved(operatorId) {
             try {
-                const response = await fetch(`/api/operator/${operatorId}/saved`);
+                const response = await fetch(`/api/operator/${operatorId}/saved`, { signal: pageAbortController.signal });
                 const data = await response.json();
                 currentOperatorSaved = data.saved;
                 updateSaveButton();
             } catch (err) {
-                console.error('Failed to check if operator is saved:', err);
+                if (!isAbortError(err)) {
+                    console.error('Failed to check if operator is saved:', err);
+                }
             }
         }
 
@@ -1445,7 +1472,7 @@ def create_app() -> FastAPI:
             try {
                 if (currentOperatorSaved) {
                     // Unsave
-                    const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE' });
+                    const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE', signal: pageAbortController.signal });
                     if (response.ok) {
                         currentOperatorSaved = false;
                         delete savedOperatorsData[operatorId];  // Remove from stored data
@@ -1458,7 +1485,7 @@ def create_app() -> FastAPI:
                     }
                 } else {
                     // Save
-                    const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'POST' });
+                    const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'POST', signal: pageAbortController.signal });
                     if (response.ok) {
                         currentOperatorSaved = true;
                         // Reload saved operators to show the new one
@@ -1466,7 +1493,9 @@ def create_app() -> FastAPI:
                     }
                 }
             } catch (err) {
-                console.error('Failed to save/unsave operator:', err);
+                if (!isAbortError(err)) {
+                    console.error('Failed to save/unsave operator:', err);
+                }
             } finally {
                 saveOperatorBtn.disabled = false;
                 updateSaveButton();
