@@ -146,11 +146,6 @@ class APYMetrics(BaseModel):
     current_net_total_eth: float | None = None
     lifetime_net_total_eth: float | None = None
 
-    # Legacy fields (deprecated, kept for backwards compatibility)
-    reward_apy_7d: float | None = None
-    reward_apy_28d: float | None = None
-    net_apy_7d: float | None = None
-
 
 class StrikeSummary(BaseModel):
     """Summary of strikes for an operator."""
