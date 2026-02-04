@@ -14,6 +14,7 @@ dependencies = [
     "pydantic>=2.5",
     "pydantic-settings>=2.0",
     "python-dotenv>=1.0",
+    "aiosqlite>=0.19",
 ]
 
 [project.optional-dependencies]

@@ -114,7 +114,9 @@ class StrikesProvider:
     @cached(ttl=300)  # Cache CID for 5 minutes
     async def get_tree_cid(self) -> str:
         """Get the current strikes tree CID from the contract."""
-        return self.csstrikes.functions.treeCid().call()
+        return await asyncio.to_thread(
+            self.csstrikes.functions.treeCid().call
+        )
 
     async def _fetch_tree_from_ipfs(self, cid: str) -> dict | None:
         """Fetch tree data from IPFS gateways."""

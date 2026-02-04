@@ -1,5 +1,6 @@
 """Main service for computing operator rewards."""
 
+from datetime import datetime, timezone
 import logging
 from decimal import Decimal
 
@@ -266,8 +267,14 @@ class OperatorService:
 
                         # Estimate next distribution date (~28 days after current frame ends)
                         # Frame duration ≈ 28 days = ~6300 epochs
+                        # If IPFS logs are behind, keep advancing until we get a future date
+                        now = datetime.now(timezone.utc)
                         next_epoch = current_frame.end_epoch + 6300
-                        next_distribution_date = epoch_to_dt(next_epoch).isoformat()
+                        next_dt = epoch_to_dt(next_epoch)
+                        while next_dt < now:
+                            next_epoch += 6300  # Add another ~28 days
+                            next_dt = epoch_to_dt(next_epoch)
+                        next_distribution_date = next_dt.isoformat()
 
                         # Estimate next distribution ETH based on current daily rate
                         if current_days > 0:

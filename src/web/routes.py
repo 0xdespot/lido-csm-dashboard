@@ -1,7 +1,19 @@
 """API endpoints for the web interface."""
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query
 
+logger = logging.getLogger(__name__)
+
+from ..data.database import (
+    delete_operator,
+    get_saved_operators,
+    is_operator_saved,
+    save_operator,
+    update_operator_data,
+)
+from ..data.price import get_eth_price
 from ..services.operator_service import OperatorService
 
 router = APIRouter()
@@ -23,6 +35,7 @@ async def get_operator(
     - Add ?history=true to include all historical distribution frames
     - Add ?withdrawals=true to include withdrawal/claim history
     """
+    logger.info(f"Get operator: {identifier}, detailed={detailed}, history={history}, withdrawals={withdrawals}")
     service = OperatorService()
 
     # Determine if this is an ID or address
@@ -242,7 +255,372 @@ async def get_operator_strikes(identifier: str):
     }
 
 
+@router.get("/saved-operators")
+async def list_saved_operators():
+    """Get all saved operators with their cached data."""
+    logger.info("Loading saved operators from database")
+    try:
+        operators = await get_saved_operators()
+        # Log what data each operator has
+        for op in operators:
+            op_id = op.get("operator_id", "?")
+            frames = len(op.get("apy", {}).get("frames", []))
+            withdrawals = len(op.get("withdrawals", []))
+            logger.info(f"  Operator {op_id}: {frames} frames, {withdrawals} withdrawals in cache")
+        logger.info(f"Loaded {len(operators)} saved operators")
+        return {"operators": operators}
+    except Exception as e:
+        logger.error(f"Error loading saved operators: {e}", exc_info=True)
+        return {"operators": [], "error": str(e)}
+
+
+@router.post("/operator/{identifier}/save")
+async def save_operator_endpoint(identifier: str):
+    """Save an operator to the follow list.
+
+    Fetches current operator data (including history and withdrawals) and stores it in the database.
+    """
+    logger.info(f"Saving operator: {identifier}")
+    service = OperatorService()
+
+    # Determine operator ID
+    if identifier.isdigit():
+        operator_id = int(identifier)
+    elif identifier.startswith("0x"):
+        operator_id = await service.onchain.find_operator_by_address(identifier)
+        if operator_id is None:
+            raise HTTPException(status_code=404, detail="Operator not found")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid identifier format")
+
+    # Fetch current operator data with history and withdrawals
+    rewards = await service.get_operator_by_id(
+        operator_id,
+        include_validators=True,
+        include_history=True,
+        include_withdrawals=True,
+    )
+    if rewards is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+
+    # Build the data dict (same format as get_operator endpoint)
+    data = {
+        "operator_id": rewards.node_operator_id,
+        "manager_address": rewards.manager_address,
+        "reward_address": rewards.reward_address,
+        "curve_id": rewards.curve_id,
+        "operator_type": rewards.operator_type,
+        "rewards": {
+            "current_bond_eth": str(rewards.current_bond_eth),
+            "required_bond_eth": str(rewards.required_bond_eth),
+            "excess_bond_eth": str(rewards.excess_bond_eth),
+            "cumulative_rewards_shares": rewards.cumulative_rewards_shares,
+            "cumulative_rewards_eth": str(rewards.cumulative_rewards_eth),
+            "distributed_shares": rewards.distributed_shares,
+            "distributed_eth": str(rewards.distributed_eth),
+            "unclaimed_shares": rewards.unclaimed_shares,
+            "unclaimed_eth": str(rewards.unclaimed_eth),
+            "total_claimable_eth": str(rewards.total_claimable_eth),
+        },
+        "validators": {
+            "total": rewards.total_validators,
+            "active": rewards.active_validators,
+            "exited": rewards.exited_validators,
+        },
+    }
+
+    if rewards.validators_by_status:
+        data["validators"]["by_status"] = rewards.validators_by_status
+
+    if rewards.avg_effectiveness is not None:
+        data["performance"] = {
+            "avg_effectiveness": round(rewards.avg_effectiveness, 2),
+        }
+
+    if rewards.active_since:
+        data["active_since"] = rewards.active_since.isoformat()
+
+    if rewards.apy:
+        data["apy"] = {
+            "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
+            "historical_reward_apy_ltd": rewards.apy.historical_reward_apy_ltd,
+            "bond_apy": rewards.apy.bond_apy,
+            "net_apy_28d": rewards.apy.net_apy_28d,
+            "net_apy_ltd": rewards.apy.net_apy_ltd,
+            "next_distribution_date": rewards.apy.next_distribution_date,
+            "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
+            "next_distribution_date": rewards.apy.next_distribution_date,
+            "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
+            "lifetime_reward_apy": rewards.apy.lifetime_reward_apy,
+            "lifetime_bond_apy": rewards.apy.lifetime_bond_apy,
+            "lifetime_net_apy": rewards.apy.lifetime_net_apy,
+        }
+        # Include distribution history frames
+        if rewards.apy.frames:
+            data["apy"]["frames"] = [
+                {
+                    "frame_number": f.frame_number,
+                    "start_date": f.start_date,
+                    "end_date": f.end_date,
+                    "rewards_eth": f.rewards_eth,
+                    "rewards_shares": f.rewards_shares,
+                    "duration_days": f.duration_days,
+                    "validator_count": f.validator_count,
+                    "apy": f.apy,
+                    "validator_count": f.validator_count,
+                    "apy": f.apy,
+                    "bond_apy": f.bond_apy,
+                    "net_apy": f.net_apy,
+                }
+                for f in rewards.apy.frames
+            ]
+
+    if rewards.health:
+        data["health"] = {
+            "bond_healthy": rewards.health.bond_healthy,
+            "bond_deficit_eth": str(rewards.health.bond_deficit_eth),
+            "stuck_validators_count": rewards.health.stuck_validators_count,
+            "slashed_validators_count": rewards.health.slashed_validators_count,
+            "validators_at_risk_count": rewards.health.validators_at_risk_count,
+            "strikes": {
+                "total_validators_with_strikes": rewards.health.strikes.total_validators_with_strikes,
+                "validators_at_risk": rewards.health.strikes.validators_at_risk,
+                "validators_near_ejection": rewards.health.strikes.validators_near_ejection,
+                "total_strikes": rewards.health.strikes.total_strikes,
+                "max_strikes": rewards.health.strikes.max_strikes,
+                "strike_threshold": rewards.health.strikes.strike_threshold,
+            },
+            "has_issues": rewards.health.has_issues,
+        }
+
+    # Include withdrawal history
+    if rewards.withdrawals:
+        data["withdrawals"] = [
+            {
+                "block_number": w.block_number,
+                "timestamp": w.timestamp,
+                "shares": w.shares,
+                "eth_value": w.eth_value,
+                "tx_hash": w.tx_hash,
+                "withdrawal_type": w.withdrawal_type,
+                "request_id": w.request_id,
+                "status": w.status,
+                "claimed_eth": w.claimed_eth,
+                "claim_tx_hash": w.claim_tx_hash,
+                "claim_timestamp": w.claim_timestamp,
+            }
+            for w in rewards.withdrawals
+        ]
+
+    # Save to database
+    frames_count = len(data.get("apy", {}).get("frames", []))
+    withdrawals_count = len(data.get("withdrawals", []))
+    logger.info(f"Saving operator {operator_id}: {frames_count} frames, {withdrawals_count} withdrawals")
+    await save_operator(operator_id, data)
+
+    return {"status": "saved", "operator_id": operator_id}
+
+
+@router.delete("/operator/{identifier}/save")
+async def unsave_operator_endpoint(identifier: str):
+    """Remove an operator from the follow list."""
+    # Determine operator ID
+    if identifier.isdigit():
+        operator_id = int(identifier)
+    elif identifier.startswith("0x"):
+        service = OperatorService()
+        operator_id = await service.onchain.find_operator_by_address(identifier)
+        if operator_id is None:
+            raise HTTPException(status_code=404, detail="Operator not found")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid identifier format")
+
+    deleted = await delete_operator(operator_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Operator not in saved list")
+
+    return {"status": "removed", "operator_id": operator_id}
+
+
+@router.get("/operator/{identifier}/saved")
+async def check_operator_saved(identifier: str):
+    """Check if an operator is in the saved list."""
+    if identifier.isdigit():
+        operator_id = int(identifier)
+    elif identifier.startswith("0x"):
+        service = OperatorService()
+        operator_id = await service.onchain.find_operator_by_address(identifier)
+        if operator_id is None:
+            return {"saved": False}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid identifier format")
+
+    saved = await is_operator_saved(operator_id)
+    return {"saved": saved, "operator_id": operator_id}
+
+
+@router.post("/operator/{identifier}/refresh")
+async def refresh_operator_endpoint(identifier: str):
+    """Refresh the cached data for a saved operator.
+
+    Fetches fresh data (including history and withdrawals) from APIs and updates the database.
+    """
+    logger.info(f"Refreshing operator: {identifier}")
+    service = OperatorService()
+
+    # Determine operator ID
+    if identifier.isdigit():
+        operator_id = int(identifier)
+    elif identifier.startswith("0x"):
+        operator_id = await service.onchain.find_operator_by_address(identifier)
+        if operator_id is None:
+            raise HTTPException(status_code=404, detail="Operator not found")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid identifier format")
+
+    # Check if operator is saved
+    if not await is_operator_saved(operator_id):
+        raise HTTPException(status_code=404, detail="Operator not in saved list")
+
+    # Fetch fresh data with history and withdrawals
+    rewards = await service.get_operator_by_id(
+        operator_id,
+        include_validators=True,
+        include_history=True,
+        include_withdrawals=True,
+    )
+    if rewards is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+
+    # Build the data dict
+    data = {
+        "operator_id": rewards.node_operator_id,
+        "manager_address": rewards.manager_address,
+        "reward_address": rewards.reward_address,
+        "curve_id": rewards.curve_id,
+        "operator_type": rewards.operator_type,
+        "rewards": {
+            "current_bond_eth": str(rewards.current_bond_eth),
+            "required_bond_eth": str(rewards.required_bond_eth),
+            "excess_bond_eth": str(rewards.excess_bond_eth),
+            "cumulative_rewards_shares": rewards.cumulative_rewards_shares,
+            "cumulative_rewards_eth": str(rewards.cumulative_rewards_eth),
+            "distributed_shares": rewards.distributed_shares,
+            "distributed_eth": str(rewards.distributed_eth),
+            "unclaimed_shares": rewards.unclaimed_shares,
+            "unclaimed_eth": str(rewards.unclaimed_eth),
+            "total_claimable_eth": str(rewards.total_claimable_eth),
+        },
+        "validators": {
+            "total": rewards.total_validators,
+            "active": rewards.active_validators,
+            "exited": rewards.exited_validators,
+        },
+    }
+
+    if rewards.validators_by_status:
+        data["validators"]["by_status"] = rewards.validators_by_status
+
+    if rewards.avg_effectiveness is not None:
+        data["performance"] = {
+            "avg_effectiveness": round(rewards.avg_effectiveness, 2),
+        }
+
+    if rewards.active_since:
+        data["active_since"] = rewards.active_since.isoformat()
+
+    if rewards.apy:
+        data["apy"] = {
+            "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
+            "historical_reward_apy_ltd": rewards.apy.historical_reward_apy_ltd,
+            "bond_apy": rewards.apy.bond_apy,
+            "net_apy_28d": rewards.apy.net_apy_28d,
+            "net_apy_ltd": rewards.apy.net_apy_ltd,
+            "next_distribution_date": rewards.apy.next_distribution_date,
+            "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
+            "next_distribution_date": rewards.apy.next_distribution_date,
+            "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
+            "lifetime_reward_apy": rewards.apy.lifetime_reward_apy,
+            "lifetime_bond_apy": rewards.apy.lifetime_bond_apy,
+            "lifetime_net_apy": rewards.apy.lifetime_net_apy,
+        }
+        # Include distribution history frames
+        if rewards.apy.frames:
+            data["apy"]["frames"] = [
+                {
+                    "frame_number": f.frame_number,
+                    "start_date": f.start_date,
+                    "end_date": f.end_date,
+                    "rewards_eth": f.rewards_eth,
+                    "rewards_shares": f.rewards_shares,
+                    "duration_days": f.duration_days,
+                    "validator_count": f.validator_count,
+                    "apy": f.apy,
+                    "validator_count": f.validator_count,
+                    "apy": f.apy,
+                    "bond_apy": f.bond_apy,
+                    "net_apy": f.net_apy,
+                }
+                for f in rewards.apy.frames
+            ]
+
+    if rewards.health:
+        data["health"] = {
+            "bond_healthy": rewards.health.bond_healthy,
+            "bond_deficit_eth": str(rewards.health.bond_deficit_eth),
+            "stuck_validators_count": rewards.health.stuck_validators_count,
+            "slashed_validators_count": rewards.health.slashed_validators_count,
+            "validators_at_risk_count": rewards.health.validators_at_risk_count,
+            "strikes": {
+                "total_validators_with_strikes": rewards.health.strikes.total_validators_with_strikes,
+                "validators_at_risk": rewards.health.strikes.validators_at_risk,
+                "validators_near_ejection": rewards.health.strikes.validators_near_ejection,
+                "total_strikes": rewards.health.strikes.total_strikes,
+                "max_strikes": rewards.health.strikes.max_strikes,
+                "strike_threshold": rewards.health.strikes.strike_threshold,
+            },
+            "has_issues": rewards.health.has_issues,
+        }
+
+    # Include withdrawal history
+    if rewards.withdrawals:
+        data["withdrawals"] = [
+            {
+                "block_number": w.block_number,
+                "timestamp": w.timestamp,
+                "shares": w.shares,
+                "eth_value": w.eth_value,
+                "tx_hash": w.tx_hash,
+                "withdrawal_type": w.withdrawal_type,
+                "request_id": w.request_id,
+                "status": w.status,
+                "claimed_eth": w.claimed_eth,
+                "claim_tx_hash": w.claim_tx_hash,
+                "claim_timestamp": w.claim_timestamp,
+            }
+            for w in rewards.withdrawals
+        ]
+
+    # Update in database
+    frames_count = len(data.get("apy", {}).get("frames", []))
+    withdrawals_count = len(data.get("withdrawals", []))
+    logger.info(f"Refreshing operator {operator_id}: {frames_count} frames, {withdrawals_count} withdrawals")
+    await update_operator_data(operator_id, data)
+
+    return {"status": "refreshed", "operator_id": operator_id, "data": data}
+
+
 @router.get("/health")
 async def health_check():
     """Health check endpoint."""
+    logger.debug("Health check called")
     return {"status": "healthy"}
+
+
+@router.get("/price/eth")
+async def get_eth_price_endpoint():
+    """Get current ETH price in USD from CoinGecko."""
+    price = await get_eth_price()
+    if price is None:
+        return {"price": None, "error": "Failed to fetch price"}
+    return {"price": price, "currency": "USD"}

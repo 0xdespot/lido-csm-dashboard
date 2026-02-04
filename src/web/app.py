@@ -1,12 +1,20 @@
 """FastAPI application factory."""
 
+import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .routes import router
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -17,6 +25,18 @@ def create_app() -> FastAPI:
         version="0.3.6.1",
     )
 
+    # Add request logging middleware
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        logger.info(f"Request: {request.method} {request.url.path}")
+        try:
+            response = await call_next(request)
+            logger.info(f"Response: {request.method} {request.url.path} -> {response.status_code}")
+            return response
+        except Exception as e:
+            logger.error(f"Request failed: {request.method} {request.url.path} -> {e}")
+            raise
+
     app.include_router(router, prefix="/api")
 
     # Mount static files for favicon and images
@@ -24,8 +44,17 @@ def create_app() -> FastAPI:
     if img_dir.exists():
         app.mount("/img", StaticFiles(directory=str(img_dir)), name="img")
 
+    @app.on_event("startup")
+    async def startup_event():
+        logger.info("CSM Dashboard starting up")
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        logger.info("CSM Dashboard shutting down")
+
     @app.get("/", response_class=HTMLResponse)
     async def index():
+        logger.debug("Serving index page")
         return """
 <!DOCTYPE html>
 <html>
@@ -51,6 +80,25 @@ def create_app() -> FastAPI:
             </div>
         </form>
 
+        <!-- Saved Operators Section -->
+        <div id="saved-operators-section" class="mb-8 hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">Saved Operators</h2>
+                <button id="refresh-all-btn" class="px-4 py-2 bg-green-600 rounded hover:bg-green-700 text-sm font-medium">
+                    Refresh All
+                </button>
+            </div>
+            <div id="saved-operators-loading" class="hidden">
+                <div class="flex items-center justify-center p-4">
+                    <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-green-500"></div>
+                    <span class="ml-3 text-gray-400">Loading saved operators...</span>
+                </div>
+            </div>
+            <div id="saved-operators-list" class="grid gap-4">
+                <!-- Populated by JavaScript -->
+            </div>
+        </div>
+
         <div id="loading" class="hidden">
             <div class="flex items-center justify-center p-8">
                 <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
@@ -64,9 +112,15 @@ def create_app() -> FastAPI:
 
         <div id="results" class="hidden">
             <div class="bg-gray-800 rounded-lg p-6 mb-6">
-                <h2 class="text-xl font-bold mb-2">
-                    Operator #<span id="operator-id"></span>
-                </h2>
+                <div class="flex justify-between items-start">
+                    <h2 class="text-xl font-bold mb-2">
+                        Operator #<span id="operator-id"></span>
+                    </h2>
+                    <button id="save-operator-btn"
+                            class="px-4 py-2 bg-yellow-600 rounded hover:bg-yellow-700 text-sm font-medium transition-colors">
+                        Save
+                    </button>
+                </div>
                 <div id="active-since-row" class="hidden text-sm text-green-400 mb-3">
                     Active Since: <span id="active-since"></span>
                 </div>
@@ -183,36 +237,60 @@ def create_app() -> FastAPI:
 
             <div class="bg-gray-800 rounded-lg p-6">
                 <h3 class="text-lg font-bold mb-4">Earnings Summary</h3>
+                <div id="eth-price-display" class="hidden text-xs text-gray-500 mb-3">
+                    ETH: $<span id="eth-price-value">0</span> USD
+                </div>
                 <div class="space-y-3">
                     <div class="flex justify-between">
                         <span class="text-gray-400">Current Bond</span>
-                        <span><span id="current-bond">0</span> ETH</span>
+                        <div class="text-right">
+                            <span><span id="current-bond">0</span> ETH</span>
+                            <span id="current-bond-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-400">Required Bond</span>
-                        <span><span id="required-bond">0</span> ETH</span>
+                        <div class="text-right">
+                            <span><span id="required-bond">0</span> ETH</span>
+                            <span id="required-bond-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-400">Excess Bond</span>
-                        <span class="text-green-400"><span id="excess-bond">0</span> ETH</span>
+                        <div class="text-right">
+                            <span class="text-green-400"><span id="excess-bond">0</span> ETH</span>
+                            <span id="excess-bond-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <hr class="border-gray-700">
                     <div class="flex justify-between">
                         <span class="text-gray-400">Cumulative Rewards</span>
-                        <span><span id="cumulative-rewards">0</span> ETH</span>
+                        <div class="text-right">
+                            <span><span id="cumulative-rewards">0</span> ETH</span>
+                            <span id="cumulative-rewards-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-400">Already Distributed</span>
-                        <span><span id="distributed-rewards">0</span> ETH</span>
+                        <div class="text-right">
+                            <span><span id="distributed-rewards">0</span> ETH</span>
+                            <span id="distributed-rewards-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-gray-400">Unclaimed Rewards</span>
-                        <span class="text-green-400"><span id="unclaimed-rewards">0</span> ETH</span>
+                        <div class="text-right">
+                            <span class="text-green-400"><span id="unclaimed-rewards">0</span> ETH</span>
+                            <span id="unclaimed-rewards-usd" class="text-gray-500 text-sm ml-2"></span>
+                        </div>
                     </div>
                     <hr class="border-gray-700">
                     <div class="flex justify-between text-xl font-bold">
                         <span>Total Claimable</span>
-                        <span class="text-yellow-400"><span id="total-claimable">0</span> ETH</span>
+                        <div class="text-right">
+                            <span class="text-yellow-400"><span id="total-claimable">0</span> ETH</span>
+                            <div id="total-claimable-usd" class="text-gray-400 text-sm font-normal"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -358,6 +436,78 @@ def create_app() -> FastAPI:
         const apySection = document.getElementById('apy-section');
         const healthSection = document.getElementById('health-section');
         const historySection = document.getElementById('history-section');
+
+        // Global abort controller for canceling requests on page unload
+        let pageAbortController = new AbortController();
+        window.addEventListener('beforeunload', () => {
+            pageAbortController.abort();
+        });
+
+        // Helper to check if error is from abort (page unload)
+        function isAbortError(err) {
+            return err.name === 'AbortError';
+        }
+
+        // ETH price state
+        let ethPriceUsd = null;
+
+        // Fetch ETH price from CoinGecko via our API
+        async function fetchEthPrice() {
+            try {
+                const response = await fetch('/api/price/eth', { signal: pageAbortController.signal });
+                const data = await response.json();
+                if (data.price) {
+                    ethPriceUsd = data.price;
+                    document.getElementById('eth-price-value').textContent = ethPriceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    document.getElementById('eth-price-display').classList.remove('hidden');
+                    // Update any displayed USD values
+                    updateUsdDisplays();
+                    // Re-render saved operator cards to show USD
+                    if (typeof rerenderSavedOperators === 'function') {
+                        rerenderSavedOperators();
+                    }
+                }
+            } catch (err) {
+                if (!isAbortError(err)) {
+                    console.error('Failed to fetch ETH price:', err);
+                }
+            }
+        }
+
+        // Format USD value
+        function formatUsd(ethAmount) {
+            if (ethPriceUsd === null || ethAmount === null || ethAmount === undefined) return '';
+            const usd = parseFloat(ethAmount) * ethPriceUsd;
+            if (usd < 0.01) return '';
+            return '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        // Update all USD displays based on current ETH values
+        function updateUsdDisplays() {
+            if (ethPriceUsd === null) return;
+
+            const fields = [
+                { eth: 'current-bond', usd: 'current-bond-usd' },
+                { eth: 'required-bond', usd: 'required-bond-usd' },
+                { eth: 'excess-bond', usd: 'excess-bond-usd' },
+                { eth: 'cumulative-rewards', usd: 'cumulative-rewards-usd' },
+                { eth: 'distributed-rewards', usd: 'distributed-rewards-usd' },
+                { eth: 'unclaimed-rewards', usd: 'unclaimed-rewards-usd' },
+                { eth: 'total-claimable', usd: 'total-claimable-usd' },
+            ];
+
+            fields.forEach(({ eth, usd }) => {
+                const ethEl = document.getElementById(eth);
+                const usdEl = document.getElementById(usd);
+                if (ethEl && usdEl) {
+                    const ethVal = parseFloat(ethEl.textContent);
+                    usdEl.textContent = formatUsd(ethVal);
+                }
+            });
+        }
+
+        // Fetch ETH price on page load
+        fetchEthPrice();
         const loadHistoryBtn = document.getElementById('load-history-btn');
         const historyLoading = document.getElementById('history-loading');
         const historyTable = document.getElementById('history-table');
@@ -369,18 +519,16 @@ def create_app() -> FastAPI:
         const withdrawalTable = document.getElementById('withdrawal-table');
         const withdrawalTbody = document.getElementById('withdrawal-tbody');
 
+        // State variables for history/withdrawal loading
+        let historyLoaded = false;
+        let withdrawalsLoaded = false;
+
         function formatApy(val) {
             return val !== null && val !== undefined ? val.toFixed(2) + '%' : '--%';
         }
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const input = document.getElementById('address').value.trim();
-
-            if (!input) return;
-
-            // Reset UI
-            loading.classList.remove('hidden');
+        // Reset UI to initial state
+        function resetUI() {
             error.classList.add('hidden');
             results.classList.add('hidden');
             validatorStatus.classList.add('hidden');
@@ -404,11 +552,11 @@ def create_app() -> FastAPI:
             document.getElementById('bond-apy-ltd').classList.add('hidden');
             document.getElementById('net-apy-ltd').classList.add('hidden');
             document.getElementById('active-since-row').classList.add('hidden');
+            document.getElementById('effectiveness-section').classList.add('hidden');
             loadDetailsBtn.classList.remove('hidden');
             loadDetailsBtn.disabled = false;
             loadDetailsBtn.textContent = 'Load Validator Status & APY (Beacon Chain)';
 
-            // Reset strikes state for new search
             const strikesDetailDiv = document.getElementById('strikes-detail');
             const strikesList = document.getElementById('strikes-list');
             if (strikesDetailDiv) strikesDetailDiv.classList.add('hidden');
@@ -416,9 +564,245 @@ def create_app() -> FastAPI:
                 strikesList.classList.add('hidden');
                 strikesList.innerHTML = '';
             }
+        }
+
+        // Display operator data in UI (handles both basic and detailed data)
+        function displayOperatorData(data) {
+            // Basic info
+            document.getElementById('operator-id').textContent = data.operator_id;
+            document.getElementById('manager-address').textContent = data.manager_address;
+            document.getElementById('reward-address').textContent = data.reward_address;
+
+            // Active Since
+            if (data.active_since) {
+                const activeSince = new Date(data.active_since);
+                const options = { year: 'numeric', month: 'short', day: 'numeric' };
+                document.getElementById('active-since').textContent = activeSince.toLocaleDateString('en-US', options);
+                document.getElementById('active-since-row').classList.remove('hidden');
+            }
+
+            // Tip
+            document.getElementById('tip-operator-id').textContent = data.operator_id;
+            document.getElementById('lookup-tip').classList.remove('hidden');
+
+            // Validators
+            document.getElementById('total-validators').textContent = data.validators?.total ?? 0;
+            document.getElementById('active-validators').textContent = data.validators?.active ?? 0;
+            document.getElementById('exited-validators').textContent = data.validators?.exited ?? 0;
+
+            // Rewards
+            document.getElementById('current-bond').textContent = parseFloat(data.rewards?.current_bond_eth ?? 0).toFixed(6);
+            document.getElementById('required-bond').textContent = parseFloat(data.rewards?.required_bond_eth ?? 0).toFixed(6);
+            document.getElementById('excess-bond').textContent = parseFloat(data.rewards?.excess_bond_eth ?? 0).toFixed(6);
+            document.getElementById('cumulative-rewards').textContent = parseFloat(data.rewards?.cumulative_rewards_eth ?? 0).toFixed(6);
+            document.getElementById('distributed-rewards').textContent = parseFloat(data.rewards?.distributed_eth ?? 0).toFixed(6);
+            document.getElementById('unclaimed-rewards').textContent = parseFloat(data.rewards?.unclaimed_eth ?? 0).toFixed(6);
+            document.getElementById('total-claimable').textContent = parseFloat(data.rewards?.total_claimable_eth ?? 0).toFixed(6);
+
+            // Update USD equivalents
+            updateUsdDisplays();
+
+            results.classList.remove('hidden');
+
+            // Detailed data (if available)
+            if (data.validators?.by_status) {
+                document.getElementById('status-active').textContent = data.validators.by_status.active || 0;
+                document.getElementById('status-pending').textContent = data.validators.by_status.pending || 0;
+                document.getElementById('status-exiting').textContent = data.validators.by_status.exiting || 0;
+                document.getElementById('status-exited').textContent = data.validators.by_status.exited || 0;
+                document.getElementById('status-slashed').textContent = data.validators.by_status.slashed || 0;
+                document.getElementById('status-unknown').textContent = data.validators.by_status.unknown || 0;
+                validatorStatus.classList.remove('hidden');
+                // Hide the load button since we have detailed data
+                loadDetailsBtn.classList.add('hidden');
+            }
+
+            // Performance/effectiveness
+            if (data.performance && data.performance.avg_effectiveness !== null) {
+                document.getElementById('avg-effectiveness').textContent = data.performance.avg_effectiveness.toFixed(1);
+                document.getElementById('effectiveness-section').classList.remove('hidden');
+            }
+
+            // APY
+            if (data.apy) {
+                document.getElementById('reward-apy-28d').textContent = formatApy(data.apy.historical_reward_apy_28d);
+                document.getElementById('reward-apy-ltd').textContent = formatApy(data.apy.historical_reward_apy_ltd);
+                document.getElementById('bond-apy-28d').textContent = formatApy(data.apy.bond_apy);
+                document.getElementById('bond-apy-ltd').textContent = formatApy(data.apy.bond_apy);
+                document.getElementById('net-apy-28d').textContent = formatApy(data.apy.net_apy_28d);
+                document.getElementById('net-apy-ltd').textContent = formatApy(data.apy.net_apy_ltd);
+
+                if (data.apy.next_distribution_date || data.apy.next_distribution_est_eth) {
+                    if (data.apy.next_distribution_date) {
+                        const nextDate = new Date(data.apy.next_distribution_date);
+                        const options = { year: 'numeric', month: 'short', day: 'numeric' };
+                        document.getElementById('next-dist-date').textContent = nextDate.toLocaleDateString('en-US', options);
+                    }
+                    if (data.apy.next_distribution_est_eth) {
+                        document.getElementById('next-dist-eth').textContent = data.apy.next_distribution_est_eth.toFixed(4);
+                    }
+                    nextDistribution.classList.remove('hidden');
+                }
+
+                apySection.classList.remove('hidden');
+                historySection.classList.remove('hidden');
+                withdrawalSection.classList.remove('hidden');
+            }
+
+            // Health
+            if (data.health) {
+                const h = data.health;
+
+                if (h.bond_healthy) {
+                    document.getElementById('health-bond').innerHTML = '<span class="text-green-400">HEALTHY</span>';
+                } else {
+                    document.getElementById('health-bond').innerHTML = `<span class="text-red-400">DEFICIT -${parseFloat(h.bond_deficit_eth).toFixed(4)} ETH</span>`;
+                }
+
+                if (h.stuck_validators_count === 0) {
+                    document.getElementById('health-stuck').innerHTML = '<span class="text-green-400">0</span>';
+                } else {
+                    document.getElementById('health-stuck').innerHTML = `<span class="text-red-400">${h.stuck_validators_count} (exit within 4 days!)</span>`;
+                }
+
+                if (h.slashed_validators_count === 0) {
+                    document.getElementById('health-slashed').innerHTML = '<span class="text-green-400">0</span>';
+                } else {
+                    document.getElementById('health-slashed').innerHTML = `<span class="text-red-400">${h.slashed_validators_count}</span>`;
+                }
+
+                if (h.validators_at_risk_count === 0) {
+                    document.getElementById('health-at-risk').innerHTML = '<span class="text-green-400">0</span>';
+                } else {
+                    document.getElementById('health-at-risk').innerHTML = `<span class="text-yellow-400">${h.validators_at_risk_count}</span>`;
+                }
+
+                // Strikes
+                const strikesDetailDiv = document.getElementById('strikes-detail');
+                if (h.strikes && h.strikes.total_validators_with_strikes === 0) {
+                    document.getElementById('health-strikes').innerHTML = '<span class="text-green-400">0 validators</span>';
+                    strikesDetailDiv.classList.add('hidden');
+                } else if (h.strikes) {
+                    const strikeParts = [];
+                    if (h.strikes.validators_at_risk > 0) {
+                        strikeParts.push(`${h.strikes.validators_at_risk} at ejection`);
+                    }
+                    if (h.strikes.validators_near_ejection > 0) {
+                        strikeParts.push(`${h.strikes.validators_near_ejection} near ejection`);
+                    }
+                    const strikeStatus = strikeParts.length > 0 ? strikeParts.join(', ') : 'monitoring';
+                    const strikeColor = h.strikes.validators_at_risk > 0 ? 'text-red-400' :
+                        (h.strikes.validators_near_ejection > 0 ? 'text-orange-400' : 'text-yellow-400');
+                    document.getElementById('health-strikes').innerHTML =
+                        `<span class="${strikeColor}">${h.strikes.total_validators_with_strikes} validators (${strikeStatus})</span>`;
+                    strikesDetailDiv.classList.remove('hidden');
+                }
+
+                healthSection.classList.remove('hidden');
+            }
+
+            // Distribution History (if frames available in cached data)
+            if (data.apy?.frames && data.apy.frames.length > 0) {
+                historyTbody.innerHTML = data.apy.frames.map(frame => {
+                    const startDate = new Date(frame.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    const endDate = new Date(frame.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const rewardApy = frame.apy !== null && frame.apy !== undefined ? frame.apy.toFixed(2) + '%' : '--';
+                    const bondApy = frame.bond_apy !== null && frame.bond_apy !== undefined ? frame.bond_apy.toFixed(2) + '%' : '--';
+                    const netApy = frame.net_apy !== null && frame.net_apy !== undefined ? frame.net_apy.toFixed(2) + '%' : '--';
+                    return `<tr class="border-t border-gray-700">
+                        <td class="py-2">${frame.frame_number}</td>
+                        <td class="py-2">${startDate} - ${endDate}</td>
+                        <td class="py-2 text-right text-green-400">${frame.rewards_eth.toFixed(4)}</td>
+                        <td class="py-2 text-right">${frame.validator_count}</td>
+                        <td class="py-2 text-right text-green-400">${rewardApy}</td>
+                        <td class="py-2 text-right text-green-400">${bondApy}</td>
+                        <td class="py-2 text-right text-yellow-400 font-bold">${netApy}</td>
+                    </tr>`;
+                }).join('');
+
+                // Add total row with lifetime APYs
+                const totalEth = data.apy.frames.reduce((sum, f) => sum + f.rewards_eth, 0);
+                const lifetimeRewardApy = data.apy.lifetime_reward_apy !== null && data.apy.lifetime_reward_apy !== undefined ? data.apy.lifetime_reward_apy.toFixed(2) + '%' : '--';
+                const lifetimeBondApy = data.apy.lifetime_bond_apy !== null && data.apy.lifetime_bond_apy !== undefined ? data.apy.lifetime_bond_apy.toFixed(2) + '%' : '--';
+                const lifetimeNetApy = data.apy.lifetime_net_apy !== null && data.apy.lifetime_net_apy !== undefined ? data.apy.lifetime_net_apy.toFixed(2) + '%' : '--';
+                historyTbody.innerHTML += `<tr class="border-t-2 border-gray-600 font-bold">
+                    <td class="py-2" colspan="2">Lifetime</td>
+                    <td class="py-2 text-right text-yellow-400">${totalEth.toFixed(4)}</td>
+                    <td class="py-2 text-right">--</td>
+                    <td class="py-2 text-right text-green-400">${lifetimeRewardApy}</td>
+                    <td class="py-2 text-right text-green-400">${lifetimeBondApy}</td>
+                    <td class="py-2 text-right text-yellow-400">${lifetimeNetApy}</td>
+                </tr>`;
+
+                historyTable.classList.remove('hidden');
+                historyLoaded = true;
+                loadHistoryBtn.textContent = 'Hide History';
+            }
+
+            // Withdrawal History (if withdrawals available in cached data)
+            if (data.withdrawals && data.withdrawals.length > 0) {
+                withdrawalTbody.innerHTML = data.withdrawals.map((w, i) => {
+                    const date = new Date(w.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const wType = w.withdrawal_type || 'stETH';
+                    let amount, amountClass;
+                    if (wType === 'unstETH' && w.claimed_eth !== null) {
+                        amount = w.claimed_eth.toFixed(4) + ' ETH';
+                        amountClass = 'text-green-400';
+                    } else {
+                        amount = w.eth_value.toFixed(4) + ' stETH';
+                        amountClass = 'text-green-400';
+                    }
+                    let status;
+                    if (wType === 'unstETH' && w.status) {
+                        const statusColors = {
+                            'pending': 'text-yellow-400',
+                            'finalized': 'text-blue-400',
+                            'claimed': 'text-green-400',
+                        };
+                        const statusLabels = {
+                            'pending': 'Pending',
+                            'finalized': 'Ready',
+                            'claimed': 'Claimed',
+                        };
+                        status = `<span class="${statusColors[w.status] || 'text-gray-400'}">${statusLabels[w.status] || w.status}</span>`;
+                    } else if (wType !== 'unstETH') {
+                        status = '<span class="text-green-400">Claimed</span>';
+                    } else {
+                        status = '--';
+                    }
+                    return `<tr class="border-t border-gray-700">
+                        <td class="py-2">${i + 1}</td>
+                        <td class="py-2">${date}</td>
+                        <td class="py-2">${wType}</td>
+                        <td class="py-2 text-right ${amountClass}">${amount}</td>
+                        <td class="py-2">${status}</td>
+                    </tr>`;
+                }).join('');
+
+                withdrawalTable.classList.remove('hidden');
+                withdrawalsLoaded = true;
+                loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
+            } else if (data.withdrawals && data.withdrawals.length === 0) {
+                // Explicit empty withdrawals
+                withdrawalTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">No withdrawals found</td></tr>';
+                withdrawalTable.classList.remove('hidden');
+                withdrawalsLoaded = true;
+                loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
+            }
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('address').value.trim();
+
+            if (!input) return;
+
+            // Reset UI and show loading
+            loading.classList.remove('hidden');
+            resetUI();
 
             try {
-                const response = await fetch(`/api/operator/${input}`);
+                const response = await fetch(`/api/operator/${input}`, { signal: pageAbortController.signal });
                 const data = await response.json();
 
                 loading.classList.add('hidden');
@@ -429,37 +813,9 @@ def create_app() -> FastAPI:
                     return;
                 }
 
-                // Populate results
-                document.getElementById('operator-id').textContent = data.operator_id;
-                document.getElementById('manager-address').textContent = data.manager_address;
-                document.getElementById('reward-address').textContent = data.reward_address;
-
-                // Show Active Since if available
-                if (data.active_since) {
-                    const activeSince = new Date(data.active_since);
-                    const options = { year: 'numeric', month: 'short', day: 'numeric' };
-                    document.getElementById('active-since').textContent = activeSince.toLocaleDateString('en-US', options);
-                    document.getElementById('active-since-row').classList.remove('hidden');
-                }
-
-                // Show tip with operator ID for faster lookups
-                document.getElementById('tip-operator-id').textContent = data.operator_id;
-                document.getElementById('lookup-tip').classList.remove('hidden');
-
-                document.getElementById('total-validators').textContent = data.validators.total;
-                document.getElementById('active-validators').textContent = data.validators.active;
-                document.getElementById('exited-validators').textContent = data.validators.exited;
-
-                document.getElementById('current-bond').textContent = parseFloat(data.rewards?.current_bond_eth ?? 0).toFixed(6);
-                document.getElementById('required-bond').textContent = parseFloat(data.rewards?.required_bond_eth ?? 0).toFixed(6);
-                document.getElementById('excess-bond').textContent = parseFloat(data.rewards?.excess_bond_eth ?? 0).toFixed(6);
-                document.getElementById('cumulative-rewards').textContent = parseFloat(data.rewards?.cumulative_rewards_eth ?? 0).toFixed(6);
-                document.getElementById('distributed-rewards').textContent = parseFloat(data.rewards?.distributed_eth ?? 0).toFixed(6);
-                document.getElementById('unclaimed-rewards').textContent = parseFloat(data.rewards?.unclaimed_eth ?? 0).toFixed(6);
-                document.getElementById('total-claimable').textContent = parseFloat(data.rewards?.total_claimable_eth ?? 0).toFixed(6);
-
-                results.classList.remove('hidden');
+                displayOperatorData(data);
             } catch (err) {
+                if (isAbortError(err)) return;  // Page is unloading, ignore
                 loading.classList.add('hidden');
                 error.classList.remove('hidden');
                 errorMessage.textContent = err.message || 'Network error';
@@ -479,7 +835,7 @@ def create_app() -> FastAPI:
             detailsLoading.classList.remove('hidden');
 
             try {
-                const response = await fetch(`/api/operator/${operatorId}?detailed=true`);
+                const response = await fetch(`/api/operator/${operatorId}?detailed=true`, { signal: pageAbortController.signal });
                 const data = await response.json();
 
                 detailsLoading.classList.add('hidden');
@@ -620,7 +976,7 @@ def create_app() -> FastAPI:
                             strikesList.classList.remove('hidden');
                             try {
                                 const opId = document.getElementById('operator-id').textContent;
-                                const strikesResp = await fetch(`/api/operator/${opId}/strikes`);
+                                const strikesResp = await fetch(`/api/operator/${opId}/strikes`, { signal: pageAbortController.signal });
                                 const strikesData = await strikesResp.json();
                                 const threshold = strikesData.strike_threshold || 3;
                                 strikesList.innerHTML = strikesData.validators.map(v => {
@@ -654,6 +1010,7 @@ def create_app() -> FastAPI:
                                 strikesLoaded = true;
                                 toggleStrikesBtn.textContent = 'Hide validator details ▲';
                             } catch (err) {
+                                if (isAbortError(err)) return;  // Page is unloading, ignore
                                 strikesList.innerHTML = '<div class="text-red-400">Failed to load strikes</div>';
                             }
                         };
@@ -713,6 +1070,7 @@ def create_app() -> FastAPI:
                     healthSection.classList.remove('hidden');
                 }
             } catch (err) {
+                if (isAbortError(err)) return;  // Page is unloading, ignore
                 detailsLoading.classList.add('hidden');
                 loadDetailsBtn.classList.remove('hidden');
                 loadDetailsBtn.textContent = 'Failed - Click to Retry';
@@ -722,7 +1080,6 @@ def create_app() -> FastAPI:
         });
 
         // History button handler
-        let historyLoaded = false;
         loadHistoryBtn.addEventListener('click', async () => {
             if (historyLoaded) {
                 // Toggle visibility
@@ -737,7 +1094,7 @@ def create_app() -> FastAPI:
             historyTable.classList.add('hidden');
 
             try {
-                const response = await fetch(`/api/operator/${operatorId}?detailed=true&history=true`);
+                const response = await fetch(`/api/operator/${operatorId}?detailed=true&history=true`, { signal: pageAbortController.signal });
                 const data = await response.json();
 
                 historyLoading.classList.add('hidden');
@@ -795,6 +1152,7 @@ def create_app() -> FastAPI:
                 historyLoaded = true;
                 loadHistoryBtn.textContent = 'Hide History';
             } catch (err) {
+                if (isAbortError(err)) return;  // Page is unloading, ignore
                 historyLoading.classList.add('hidden');
                 historyTbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-red-400">Failed to load history</td></tr>';
                 historyTable.classList.remove('hidden');
@@ -802,7 +1160,6 @@ def create_app() -> FastAPI:
         });
 
         // Withdrawal button handler
-        let withdrawalsLoaded = false;
         loadWithdrawalsBtn.addEventListener('click', async () => {
             if (withdrawalsLoaded) {
                 // Toggle visibility
@@ -817,7 +1174,7 @@ def create_app() -> FastAPI:
             withdrawalTable.classList.add('hidden');
 
             try {
-                const response = await fetch(`/api/operator/${operatorId}?withdrawals=true`);
+                const response = await fetch(`/api/operator/${operatorId}?withdrawals=true`, { signal: pageAbortController.signal });
                 const data = await response.json();
 
                 withdrawalLoading.classList.add('hidden');
@@ -892,11 +1249,327 @@ def create_app() -> FastAPI:
                 withdrawalsLoaded = true;
                 loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
             } catch (err) {
+                if (isAbortError(err)) return;  // Page is unloading, ignore
                 withdrawalLoading.classList.add('hidden');
                 withdrawalTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-red-400">Failed to load withdrawals</td></tr>';
                 withdrawalTable.classList.remove('hidden');
             }
         });
+
+        // ===== SAVED OPERATORS FUNCTIONALITY =====
+        const savedOperatorsSection = document.getElementById('saved-operators-section');
+        const savedOperatorsList = document.getElementById('saved-operators-list');
+        const savedOperatorsLoading = document.getElementById('saved-operators-loading');
+        const refreshAllBtn = document.getElementById('refresh-all-btn');
+        const saveOperatorBtn = document.getElementById('save-operator-btn');
+
+        let currentOperatorSaved = false;
+        let savedOperatorsData = {};  // Store operator data by ID for quick lookup
+
+        // Format relative time with precision
+        function formatRelativeTime(isoString) {
+            const date = new Date(isoString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffSecs = Math.floor(diffMs / 1000);
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffSecs < 60) return 'just now';
+            if (diffMins < 60) return `${diffMins} min ago`;
+            if (diffHours < 24) {
+                const mins = diffMins % 60;
+                if (mins === 0) return `${diffHours}h ago`;
+                return `${diffHours}h ${mins}m ago`;
+            }
+            if (diffDays < 7) {
+                const hours = diffHours % 24;
+                if (hours === 0) return `${diffDays}d ago`;
+                return `${diffDays}d ${hours}h ago`;
+            }
+            return `${diffDays}d ago`;
+        }
+
+        // Render a single saved operator card
+        function renderSavedOperatorCard(op) {
+            const claimable = parseFloat(op.rewards?.total_claimable_eth ?? 0).toFixed(4);
+            const claimableUsd = formatUsd(claimable);
+            const validators = op.validators?.active ?? 0;
+            const updatedAt = op._updated_at ? formatRelativeTime(op._updated_at) : 'unknown';
+
+            // Health indicator
+            let healthDot = '<span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span>';
+            if (op.health?.has_issues) {
+                if (!op.health.bond_healthy || op.health.slashed_validators_count > 0 || op.health.stuck_validators_count > 0) {
+                    healthDot = '<span class="w-2 h-2 rounded-full bg-red-500 inline-block"></span>';
+                } else {
+                    healthDot = '<span class="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span>';
+                }
+            }
+
+            return `
+                <div class="bg-gray-800 rounded-lg p-4 flex justify-between items-center" data-operator-id="${op.operator_id}">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            ${healthDot}
+                            <span class="font-bold">Operator #${op.operator_id}</span>
+                            <span class="text-gray-500 text-xs">Updated ${updatedAt}</span>
+                        </div>
+                        <div class="text-sm text-gray-400">
+                            <span class="text-green-400">${validators}</span> active validators |
+                            <span class="text-yellow-400">${claimable} ETH</span>${claimableUsd ? ` <span class="text-gray-500">(${claimableUsd})</span>` : ''} claimable
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="viewSavedOperator(${op.operator_id})"
+                                class="px-3 py-1 bg-blue-600 rounded hover:bg-blue-700 text-sm">
+                            View
+                        </button>
+                        <button onclick="refreshSavedOperator(${op.operator_id}, this)"
+                                class="px-3 py-1 bg-green-600 rounded hover:bg-green-700 text-sm">
+                            Refresh
+                        </button>
+                        <button onclick="removeSavedOperator(${op.operator_id}, this)"
+                                class="px-3 py-1 bg-red-600 rounded hover:bg-red-700 text-sm">
+                            Remove
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Re-render saved operator cards (called when ETH price updates)
+        function rerenderSavedOperators() {
+            if (Object.keys(savedOperatorsData).length > 0) {
+                const operators = Object.values(savedOperatorsData);
+                savedOperatorsList.innerHTML = operators.map(renderSavedOperatorCard).join('');
+            }
+        }
+
+        // Load saved operators on page load
+        async function loadSavedOperators() {
+            try {
+                const response = await fetch('/api/saved-operators', { signal: pageAbortController.signal });
+                const data = await response.json();
+
+                if (data.operators && data.operators.length > 0) {
+                    // Store data for quick lookup
+                    savedOperatorsData = {};
+                    data.operators.forEach(op => {
+                        savedOperatorsData[op.operator_id] = op;
+                    });
+                    savedOperatorsList.innerHTML = data.operators.map(renderSavedOperatorCard).join('');
+                    savedOperatorsSection.classList.remove('hidden');
+                } else {
+                    savedOperatorsData = {};
+                    savedOperatorsSection.classList.add('hidden');
+                }
+            } catch (err) {
+                if (!isAbortError(err)) {
+                    console.error('Failed to load saved operators:', err);
+                }
+            }
+        }
+
+        // View a saved operator (display cached data directly)
+        window.viewSavedOperator = function(operatorId) {
+            const opData = savedOperatorsData[operatorId];
+            if (!opData) {
+                // Fallback to API fetch if data not in cache
+                document.getElementById('address').value = operatorId;
+                form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+                return;
+            }
+
+            // Display cached data directly
+            document.getElementById('address').value = operatorId;
+            resetUI();
+            displayOperatorData(opData);
+
+            // Update save button state
+            currentOperatorSaved = true;
+            updateSaveButton();
+        };
+
+        // Refresh a saved operator
+        window.refreshSavedOperator = async function(operatorId, btn) {
+            const originalText = btn.textContent;
+            btn.innerHTML = '<span class="inline-block animate-spin">&#8635;</span>';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST', signal: pageAbortController.signal });
+                if (response.ok) {
+                    const data = await response.json();
+                    // Update the card in the list and stored data
+                    const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
+                    if (card && data.data) {
+                        data.data._updated_at = new Date().toISOString();
+                        savedOperatorsData[operatorId] = data.data;  // Update stored data
+                        card.outerHTML = renderSavedOperatorCard(data.data);
+                    }
+                }
+            } catch (err) {
+                if (!isAbortError(err)) {
+                    console.error('Failed to refresh operator:', err);
+                }
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        };
+
+        // Remove a saved operator
+        window.removeSavedOperator = async function(operatorId, btn) {
+            const originalText = btn.textContent;
+            btn.innerHTML = '<span class="inline-block animate-spin">&#8635;</span>';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE', signal: pageAbortController.signal });
+                if (response.ok) {
+                    delete savedOperatorsData[operatorId];  // Remove from stored data
+                    const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
+                    if (card) card.remove();
+
+                    // Hide section if no more operators
+                    if (savedOperatorsList.children.length === 0) {
+                        savedOperatorsSection.classList.add('hidden');
+                    }
+
+                    // Update save button if viewing this operator
+                    const currentOpId = document.getElementById('operator-id').textContent;
+                    if (currentOpId == operatorId) {
+                        currentOperatorSaved = false;
+                        updateSaveButton();
+                    }
+                }
+            } catch (err) {
+                if (!isAbortError(err)) {
+                    console.error('Failed to remove operator:', err);
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
+            }
+        };
+
+        // Refresh all saved operators
+        refreshAllBtn.addEventListener('click', async () => {
+            const originalText = refreshAllBtn.textContent;
+            refreshAllBtn.disabled = true;
+
+            const cards = savedOperatorsList.querySelectorAll('[data-operator-id]');
+            const total = cards.length;
+            let current = 0;
+
+            for (const card of cards) {
+                current++;
+                refreshAllBtn.innerHTML = `<span class="inline-block animate-spin mr-1">&#8635;</span> ${current}/${total}`;
+
+                const operatorId = card.dataset.operatorId;
+                try {
+                    const response = await fetch(`/api/operator/${operatorId}/refresh`, { method: 'POST', signal: pageAbortController.signal });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.data) {
+                            data.data._updated_at = new Date().toISOString();
+                            savedOperatorsData[operatorId] = data.data;  // Update stored data
+                            card.outerHTML = renderSavedOperatorCard(data.data);
+                        }
+                    }
+                } catch (err) {
+                    if (isAbortError(err)) break;  // Page is unloading, stop loop
+                    console.error(`Failed to refresh operator ${operatorId}:`, err);
+                }
+            }
+
+            refreshAllBtn.innerHTML = originalText;
+            refreshAllBtn.disabled = false;
+        });
+
+        // Update save button state
+        function updateSaveButton() {
+            if (currentOperatorSaved) {
+                saveOperatorBtn.textContent = 'Saved';
+                saveOperatorBtn.classList.remove('bg-yellow-600', 'hover:bg-yellow-700');
+                saveOperatorBtn.classList.add('bg-gray-600', 'hover:bg-gray-700');
+            } else {
+                saveOperatorBtn.textContent = 'Save';
+                saveOperatorBtn.classList.remove('bg-gray-600', 'hover:bg-gray-700');
+                saveOperatorBtn.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
+            }
+        }
+
+        // Check if current operator is saved
+        async function checkIfOperatorSaved(operatorId) {
+            try {
+                const response = await fetch(`/api/operator/${operatorId}/saved`, { signal: pageAbortController.signal });
+                const data = await response.json();
+                currentOperatorSaved = data.saved;
+                updateSaveButton();
+            } catch (err) {
+                if (!isAbortError(err)) {
+                    console.error('Failed to check if operator is saved:', err);
+                }
+            }
+        }
+
+        // Save/unsave operator button handler
+        saveOperatorBtn.addEventListener('click', async () => {
+            const operatorId = document.getElementById('operator-id').textContent;
+            if (!operatorId) return;
+
+            saveOperatorBtn.disabled = true;
+            saveOperatorBtn.innerHTML = '<span class="inline-block animate-spin">&#8635;</span>';
+
+            try {
+                if (currentOperatorSaved) {
+                    // Unsave
+                    const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'DELETE', signal: pageAbortController.signal });
+                    if (response.ok) {
+                        currentOperatorSaved = false;
+                        delete savedOperatorsData[operatorId];  // Remove from stored data
+                        // Remove from saved list
+                        const card = document.querySelector(`[data-operator-id="${operatorId}"]`);
+                        if (card) card.remove();
+                        if (savedOperatorsList.children.length === 0) {
+                            savedOperatorsSection.classList.add('hidden');
+                        }
+                    }
+                } else {
+                    // Save
+                    const response = await fetch(`/api/operator/${operatorId}/save`, { method: 'POST', signal: pageAbortController.signal });
+                    if (response.ok) {
+                        currentOperatorSaved = true;
+                        // Reload saved operators to show the new one
+                        await loadSavedOperators();
+                    }
+                }
+            } catch (err) {
+                if (!isAbortError(err)) {
+                    console.error('Failed to save/unsave operator:', err);
+                }
+            } finally {
+                saveOperatorBtn.disabled = false;
+                updateSaveButton();
+            }
+        });
+
+        // Modify form submit to check if operator is saved
+        const originalFormSubmit = form.onsubmit;
+        form.addEventListener('submit', async (e) => {
+            // Wait a bit for the results to load, then check if saved
+            setTimeout(async () => {
+                const operatorId = document.getElementById('operator-id').textContent;
+                if (operatorId) {
+                    await checkIfOperatorSaved(operatorId);
+                }
+            }, 100);
+        });
+
+        // Load saved operators on page load
+        loadSavedOperators();
     </script>
 </body>
 </html>
