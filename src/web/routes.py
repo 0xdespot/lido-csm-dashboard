@@ -349,6 +349,11 @@ async def save_operator_endpoint(identifier: str):
             "net_apy_ltd": rewards.apy.net_apy_ltd,
             "next_distribution_date": rewards.apy.next_distribution_date,
             "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
+            "next_distribution_date": rewards.apy.next_distribution_date,
+            "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
+            "lifetime_reward_apy": rewards.apy.lifetime_reward_apy,
+            "lifetime_bond_apy": rewards.apy.lifetime_bond_apy,
+            "lifetime_net_apy": rewards.apy.lifetime_net_apy,
         }
         # Include distribution history frames
         if rewards.apy.frames:
