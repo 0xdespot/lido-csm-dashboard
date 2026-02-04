@@ -22,7 +22,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="CSM Operator Dashboard",
         description="Track your Lido CSM validator earnings",
-        version="0.3.6.1",
+        version="0.4.0",
     )
 
     # Add request logging middleware
@@ -564,6 +564,10 @@ def create_app() -> FastAPI:
                 strikesList.classList.add('hidden');
                 strikesList.innerHTML = '';
             }
+
+            // Reset save button state
+            currentOperatorSaved = false;
+            updateSaveButton();
         }
 
         // Display operator data in UI (handles both basic and detailed data)
