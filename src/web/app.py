@@ -706,13 +706,17 @@ def create_app() -> FastAPI:
                 historyTbody.innerHTML = data.apy.frames.map(frame => {
                     const startDate = new Date(frame.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                     const endDate = new Date(frame.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    const perVal = frame.validator_count > 0 ? (frame.rewards_eth / frame.validator_count).toFixed(6) : '--';
+                    const rewardApy = frame.apy !== null && frame.apy !== undefined ? frame.apy.toFixed(2) + '%' : '--';
+                    const bondApy = frame.bond_apy !== null && frame.bond_apy !== undefined ? frame.bond_apy.toFixed(2) + '%' : '--';
+                    const netApy = frame.net_apy !== null && frame.net_apy !== undefined ? frame.net_apy.toFixed(2) + '%' : '--';
                     return `<tr class="border-t border-gray-700">
                         <td class="py-2">${frame.frame_number}</td>
                         <td class="py-2">${startDate} - ${endDate}</td>
                         <td class="py-2 text-right text-green-400">${frame.rewards_eth.toFixed(4)}</td>
                         <td class="py-2 text-right">${frame.validator_count}</td>
-                        <td class="py-2 text-right text-gray-400">${perVal}</td>
+                        <td class="py-2 text-right text-green-400">${rewardApy}</td>
+                        <td class="py-2 text-right text-green-400">${bondApy}</td>
+                        <td class="py-2 text-right text-yellow-400 font-bold">${netApy}</td>
                     </tr>`;
                 }).join('');
 
