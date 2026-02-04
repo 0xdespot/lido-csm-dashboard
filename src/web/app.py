@@ -564,6 +564,10 @@ def create_app() -> FastAPI:
                 strikesList.classList.add('hidden');
                 strikesList.innerHTML = '';
             }
+
+            // Reset save button state
+            currentOperatorSaved = false;
+            updateSaveButton();
         }
 
         // Display operator data in UI (handles both basic and detailed data)
