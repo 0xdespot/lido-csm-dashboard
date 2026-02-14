@@ -301,8 +301,8 @@ class OnChainDataProvider:
 
         Tries multiple methods in order:
         1. Etherscan API (if API key configured) - most reliable
-        2. Chunked RPC queries (10k block chunks) - works on some RPCs
-        3. Hardcoded known CIDs - fallback for users without API keys
+        2. Known CIDs + chunked RPC queries for newer events
+        3. Hardcoded known CIDs only - fallback for users without API keys
         4. Current logCid from contract - ultimate fallback
 
         Args:
@@ -323,16 +323,37 @@ class OnChainDataProvider:
                 start_block,
             )
             if events:
+                logger.info(f"Fetched {len(events)} distributions via Etherscan API")
                 return events
 
-        # 2. Try chunked RPC queries
+        # 2. Use known CIDs as base + try RPC for newer events only
+        if KNOWN_DISTRIBUTION_LOGS:
+            last_known_block = KNOWN_DISTRIBUTION_LOGS[-1]["block"]
+            new_events = await self._query_events_chunked(last_known_block + 1)
+            if new_events:
+                # Merge known CIDs with newly discovered events
+                known_cids = {e["logCid"] for e in KNOWN_DISTRIBUTION_LOGS}
+                merged = list(KNOWN_DISTRIBUTION_LOGS)
+                for event in new_events:
+                    if event["logCid"] not in known_cids:
+                        merged.append(event)
+                logger.info(
+                    f"Using {len(KNOWN_DISTRIBUTION_LOGS)} known + "
+                    f"{len(merged) - len(KNOWN_DISTRIBUTION_LOGS)} new distributions via RPC"
+                )
+                return sorted(merged, key=lambda x: x["block"])
+            else:
+                logger.info(
+                    f"Using {len(KNOWN_DISTRIBUTION_LOGS)} known distributions "
+                    f"(set etherscan_api_key for latest data)"
+                )
+                return KNOWN_DISTRIBUTION_LOGS
+
+        # 3. Try full chunked RPC queries (no known CIDs available)
         events = await self._query_events_chunked(start_block)
         if events:
+            logger.info(f"Fetched {len(events)} distributions via RPC event queries")
             return events
-
-        # 3. Use known historical CIDs as fallback
-        if KNOWN_DISTRIBUTION_LOGS:
-            return KNOWN_DISTRIBUTION_LOGS
 
         # 4. Ultimate fallback: current logCid only
         try:
@@ -350,9 +371,15 @@ class OnChainDataProvider:
     async def _query_events_chunked(
         self, start_block: int, chunk_size: int = 10000
     ) -> list[dict]:
-        """Query events in smaller chunks to work around RPC limitations."""
+        """Query events in smaller chunks to work around RPC limitations.
+
+        Continues past failed chunks rather than aborting, but gives up
+        after too many consecutive failures.
+        """
         current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
         all_events = []
+        consecutive_failures = 0
+        max_consecutive_failures = 3
 
         for from_block in range(start_block, current_block, chunk_size):
             to_block = min(from_block + chunk_size - 1, current_block)
@@ -368,9 +395,18 @@ class OnChainDataProvider:
                     all_events.append(
                         {"block": e["blockNumber"], "logCid": e["args"]["logCid"]}
                     )
-            except Exception:
-                # If chunked queries fail, give up on this method
-                return []
+                consecutive_failures = 0
+            except Exception as e:
+                consecutive_failures += 1
+                logger.debug(
+                    f"RPC event query failed for blocks {from_block}-{to_block}: {e}"
+                )
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.debug(
+                        f"Giving up on RPC event queries after "
+                        f"{max_consecutive_failures} consecutive failures"
+                    )
+                    break
 
         return sorted(all_events, key=lambda x: x["block"])
 
