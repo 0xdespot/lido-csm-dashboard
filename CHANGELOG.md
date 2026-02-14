@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.1] - 2026-02-14
+
+### Changed
+- Improved distribution event fetching with hybrid approach
+- Added new distribution log entries
+
 ## [0.3.6] - 2026-01-22
 
 ### Added
