@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.2] - 2026-02-17
+
+### Added
+- Operator identifier parsing with Ethereum address validation via Web3
+- Validator pubkey validation to filter malformed entries from strikes data
+
+### Fixed
+- XSS vulnerability in strikes detail rendering — replaced innerHTML with DOM APIs
+
 ## [0.4.1] - 2026-02-14
 
 ### Changed

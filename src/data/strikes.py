@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ STRIKE_THRESHOLDS = {
     2: 3,  # Permissionless (current)
 }
 DEFAULT_STRIKE_THRESHOLD = 3
+VALIDATOR_PUBKEY_RE = re.compile(r"^0x[a-fA-F0-9]{96}$")
 
 
 def get_strike_threshold(curve_id: int) -> int:
@@ -32,6 +34,11 @@ def get_strike_threshold(curve_id: int) -> int:
     if curve_id not in STRIKE_THRESHOLDS:
         logger.warning(f"Unknown curve_id {curve_id}, defaulting to strike threshold {DEFAULT_STRIKE_THRESHOLD}")
     return STRIKE_THRESHOLDS.get(curve_id, DEFAULT_STRIKE_THRESHOLD)
+
+
+def is_valid_validator_pubkey(pubkey: str) -> bool:
+    """Validate that a pubkey matches expected 48-byte hex format."""
+    return bool(VALIDATOR_PUBKEY_RE.fullmatch(pubkey))
 
 
 @dataclass
@@ -213,6 +220,9 @@ class StrikesProvider:
             # Ensure pubkey is a string
             if not isinstance(pubkey, str):
                 pubkey = str(pubkey) if pubkey else ""
+            if not is_valid_validator_pubkey(pubkey):
+                logger.debug("Skipping invalid pubkey in strikes tree for operator %s", operator_id)
+                continue
 
             # Count total strikes (sum of the 6-frame array), filtering non-numeric values
             if isinstance(strikes_array, list):

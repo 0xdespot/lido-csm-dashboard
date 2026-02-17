@@ -22,7 +22,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="CSM Operator Dashboard",
         description="Track your Lido CSM validator earnings",
-        version="0.4.1",
+        version="0.4.2",
     )
 
     # Add request logging middleware
@@ -973,49 +973,103 @@ def create_app() -> FastAPI:
                         strikesDetailDiv.classList.remove('hidden');
                         let strikesLoaded = false;
 
+                        const createStrikeRow = (validator, frameDates, defaultThreshold) => {
+                            const vThreshold = validator.strike_threshold || defaultThreshold;
+                            const colorClass = validator.at_ejection_risk ? 'text-red-400' :
+                                (validator.strike_count === vThreshold - 1 ? 'text-orange-400' : 'text-yellow-400');
+                            const pubkey = typeof validator.pubkey === 'string' ? validator.pubkey : '';
+                            const shortPubkey = pubkey.length > 18 ? `${pubkey.slice(0, 10)}...${pubkey.slice(-8)}` : pubkey;
+
+                            const row = document.createElement('div');
+                            row.className = `flex items-center gap-2 py-1.5 border-b border-gray-700 last:border-0 ${colorClass}`;
+
+                            const pubkeyText = document.createElement('span');
+                            pubkeyText.className = 'font-mono text-xs';
+                            pubkeyText.textContent = shortPubkey;
+                            row.appendChild(pubkeyText);
+
+                            const copyButton = document.createElement('button');
+                            copyButton.type = 'button';
+                            copyButton.className = 'text-gray-400 hover:text-white text-xs';
+                            copyButton.title = 'Copy full pubkey';
+                            copyButton.textContent = 'copy';
+                            copyButton.addEventListener('click', async () => {
+                                const originalText = copyButton.textContent;
+                                try {
+                                    await navigator.clipboard.writeText(pubkey);
+                                    copyButton.textContent = 'copied';
+                                } catch (copyErr) {
+                                    copyButton.textContent = 'error';
+                                }
+                                setTimeout(() => {
+                                    copyButton.textContent = originalText;
+                                }, 1000);
+                            });
+                            row.appendChild(copyButton);
+
+                            const beaconLink = document.createElement('a');
+                            beaconLink.href = `https://beaconcha.in/validator/${encodeURIComponent(pubkey)}`;
+                            beaconLink.target = '_blank';
+                            beaconLink.rel = 'noopener';
+                            beaconLink.className = 'text-blue-400 hover:text-blue-300 text-sm';
+                            beaconLink.title = 'View on beaconcha.in';
+                            beaconLink.textContent = 'open';
+                            row.appendChild(beaconLink);
+
+                            const dots = document.createElement('span');
+                            dots.className = 'flex gap-0.5 text-base ml-1';
+                            const strikeArray = Array.isArray(validator.strikes) ? validator.strikes : [];
+                            strikeArray.forEach((strike, i) => {
+                                const frame = frameDates && frameDates[i];
+                                const dateRange = frame ? `${frame.start} - ${frame.end}` : `Frame ${i + 1}`;
+                                const tooltip = `${dateRange}: ${strike ? 'Strike' : 'OK'}`;
+
+                                const dot = document.createElement('span');
+                                dot.className = `${strike ? 'text-red-500' : 'text-green-500'} cursor-help`;
+                                dot.title = tooltip;
+                                dot.textContent = '●';
+                                dots.appendChild(dot);
+                            });
+                            row.appendChild(dots);
+
+                            const count = document.createElement('span');
+                            count.className = 'text-gray-400 text-xs';
+                            count.textContent = `(${validator.strike_count}/${vThreshold})`;
+                            row.appendChild(count);
+
+                            return row;
+                        };
+
                         // Function to load strikes data
                         const loadStrikesData = async () => {
                             if (strikesLoaded) return;
-                            strikesList.innerHTML = '<div class="text-gray-400">Loading...</div>';
+                            strikesList.textContent = 'Loading...';
                             strikesList.classList.remove('hidden');
                             try {
                                 const opId = document.getElementById('operator-id').textContent;
                                 const strikesResp = await fetch(`/api/operator/${opId}/strikes`, { signal: pageAbortController.signal });
                                 const strikesData = await strikesResp.json();
                                 const threshold = strikesData.strike_threshold || 3;
-                                strikesList.innerHTML = strikesData.validators.map(v => {
-                                    const vThreshold = v.strike_threshold || threshold;
-                                    const colorClass = v.at_ejection_risk ? 'text-red-400' :
-                                        (v.strike_count === vThreshold - 1 ? 'text-orange-400' : 'text-yellow-400');
+                                const validators = Array.isArray(strikesData.validators) ? strikesData.validators : [];
+                                strikesList.textContent = '';
 
-                                    // Generate 6 dots with date tooltips
-                                    const dots = v.strikes.map((strike, i) => {
-                                        const frame = strikesData.frame_dates && strikesData.frame_dates[i];
-                                        const dateRange = frame ? `${frame.start} - ${frame.end}` : `Frame ${i + 1}`;
-                                        const tooltip = `${dateRange}: ${strike ? 'Strike' : 'OK'}`;
-                                        const color = strike ? 'text-red-500' : 'text-green-500';
-                                        return `<span class="${color} cursor-help" title="${tooltip}">●</span>`;
-                                    }).join('');
+                                if (validators.length === 0) {
+                                    strikesList.textContent = 'No strike details available';
+                                    strikesLoaded = true;
+                                    toggleStrikesBtn.textContent = 'Hide validator details ▲';
+                                    return;
+                                }
 
-                                    // Truncated pubkey with copy + beaconcha.in link
-                                    const shortPubkey = v.pubkey.slice(0, 10) + '...' + v.pubkey.slice(-8);
-                                    const beaconUrl = `https://beaconcha.in/validator/${v.pubkey}`;
-
-                                    return `<div class="flex items-center gap-2 py-1.5 border-b border-gray-700 last:border-0 ${colorClass}">
-                                        <span class="font-mono text-xs">${shortPubkey}</span>
-                                        <button onclick="navigator.clipboard.writeText('${v.pubkey}'); this.textContent='✓'; setTimeout(() => this.textContent='📋', 1000)"
-                                                class="text-gray-400 hover:text-white text-sm" title="Copy full address">📋</button>
-                                        <a href="${beaconUrl}" target="_blank" rel="noopener"
-                                           class="text-blue-400 hover:text-blue-300 text-sm" title="View on beaconcha.in">↗</a>
-                                        <span class="flex gap-0.5 text-base ml-1">${dots}</span>
-                                        <span class="text-gray-400 text-xs">(${v.strike_count}/${vThreshold})</span>
-                                    </div>`;
-                                }).join('');
+                                const rows = document.createDocumentFragment();
+                                validators.forEach((validator) => {
+                                    rows.appendChild(createStrikeRow(validator, strikesData.frame_dates, threshold));
+                                });
+                                strikesList.appendChild(rows);
                                 strikesLoaded = true;
                                 toggleStrikesBtn.textContent = 'Hide validator details ▲';
                             } catch (err) {
                                 if (isAbortError(err)) return;  // Page is unloading, ignore
-                                strikesList.innerHTML = '<div class="text-red-400">Failed to load strikes</div>';
+                                strikesList.textContent = 'Failed to load strikes';
                             }
                         };
 

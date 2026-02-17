@@ -5,8 +5,10 @@ import pytest
 from src.data.strikes import (
     DEFAULT_STRIKE_THRESHOLD,
     STRIKE_THRESHOLDS,
+    StrikesProvider,
     ValidatorStrikes,
     get_strike_threshold,
+    is_valid_validator_pubkey,
 )
 
 
@@ -113,3 +115,50 @@ class TestValidatorStrikes:
         assert vs.strike_count == 0
         assert vs.at_ejection_risk is False
         assert sum(vs.strikes) == 0
+
+
+class TestPubkeyValidation:
+    """Tests for pubkey validation and filtering."""
+
+    def test_valid_pubkey_format(self):
+        """Validator pubkeys must be 48-byte hex with 0x prefix."""
+        valid_pubkey = "0x" + "ab" * 48
+        assert is_valid_validator_pubkey(valid_pubkey) is True
+
+    @pytest.mark.parametrize(
+        "pubkey",
+        [
+            "",
+            "0x1234",
+            "ab" * 48,
+            "0x" + "zz" * 48,
+            "0x" + "ab" * 47,
+            "0x" + "ab" * 49,
+        ],
+    )
+    def test_invalid_pubkey_formats(self, pubkey):
+        """Invalid pubkey formats are rejected."""
+        assert is_valid_validator_pubkey(pubkey) is False
+
+    @pytest.mark.asyncio
+    async def test_get_operator_strikes_skips_invalid_pubkeys(self, tmp_path, monkeypatch):
+        """Only valid validator pubkeys should be returned to API consumers."""
+        provider = StrikesProvider(cache_dir=tmp_path)
+        valid_pubkey = "0x" + "ab" * 48
+
+        async def fake_tree():
+            return {
+                "values": [
+                    {"value": [42, valid_pubkey, [1, 0, 1, 0, 0, 0]]},
+                    {"value": [42, "not-a-pubkey", [1, 1, 1, 0, 0, 0]]},
+                    {"value": [7, valid_pubkey, [1, 1, 1, 1, 0, 0]]},
+                ]
+            }
+
+        monkeypatch.setattr(provider, "fetch_strikes_tree", fake_tree)
+
+        strikes = await provider.get_operator_strikes(operator_id=42, curve_id=2)
+
+        assert len(strikes) == 1
+        assert strikes[0].pubkey == valid_pubkey
+        assert strikes[0].strike_count == 2

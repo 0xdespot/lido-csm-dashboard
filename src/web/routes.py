@@ -15,6 +15,7 @@ from ..data.database import (
 )
 from ..data.price import get_eth_price
 from ..services.operator_service import OperatorService
+from .identifiers import parse_operator_identifier
 
 router = APIRouter()
 
@@ -38,16 +39,12 @@ async def get_operator(
     logger.info(f"Get operator: {identifier}, detailed={detailed}, history={history}, withdrawals={withdrawals}")
     service = OperatorService()
 
-    # Determine if this is an ID or address
-    if identifier.isdigit():
-        operator_id = int(identifier)
-        if operator_id < 0 or operator_id > 1_000_000:
-            raise HTTPException(status_code=400, detail="Invalid operator ID")
+    id_type, parsed_identifier = parse_operator_identifier(identifier)
+    if id_type == "id":
+        operator_id = parsed_identifier
         rewards = await service.get_operator_by_id(operator_id, detailed or history, history, withdrawals)
-    elif identifier.startswith("0x"):
-        rewards = await service.get_operator_by_address(identifier, detailed or history, history, withdrawals)
     else:
-        raise HTTPException(status_code=400, detail="Invalid identifier format")
+        rewards = await service.get_operator_by_address(parsed_identifier, detailed or history, history, withdrawals)
 
     if rewards is None:
         raise HTTPException(status_code=404, detail="Operator not found")
@@ -218,15 +215,13 @@ async def get_operator_strikes(identifier: str):
     """Get detailed strikes for an operator's validators."""
     service = OperatorService()
 
-    # Determine if this is an ID or address
-    if identifier.isdigit():
-        operator_id = int(identifier)
-    elif identifier.startswith("0x"):
-        operator_id = await service.onchain.find_operator_by_address(identifier)
+    id_type, parsed_identifier = parse_operator_identifier(identifier)
+    if id_type == "id":
+        operator_id = parsed_identifier
+    else:
+        operator_id = await service.onchain.find_operator_by_address(parsed_identifier)
         if operator_id is None:
             raise HTTPException(status_code=404, detail="Operator not found")
-    else:
-        raise HTTPException(status_code=400, detail="Invalid identifier format")
 
     # Get curve_id to determine strike threshold
     curve_id = await service.onchain.get_bond_curve_id(operator_id)
@@ -283,15 +278,13 @@ async def save_operator_endpoint(identifier: str):
     logger.info(f"Saving operator: {identifier}")
     service = OperatorService()
 
-    # Determine operator ID
-    if identifier.isdigit():
-        operator_id = int(identifier)
-    elif identifier.startswith("0x"):
-        operator_id = await service.onchain.find_operator_by_address(identifier)
+    id_type, parsed_identifier = parse_operator_identifier(identifier)
+    if id_type == "id":
+        operator_id = parsed_identifier
+    else:
+        operator_id = await service.onchain.find_operator_by_address(parsed_identifier)
         if operator_id is None:
             raise HTTPException(status_code=404, detail="Operator not found")
-    else:
-        raise HTTPException(status_code=400, detail="Invalid identifier format")
 
     # Fetch current operator data with history and withdrawals
     rewards = await service.get_operator_by_id(
@@ -420,16 +413,14 @@ async def save_operator_endpoint(identifier: str):
 @router.delete("/operator/{identifier}/save")
 async def unsave_operator_endpoint(identifier: str):
     """Remove an operator from the follow list."""
-    # Determine operator ID
-    if identifier.isdigit():
-        operator_id = int(identifier)
-    elif identifier.startswith("0x"):
+    id_type, parsed_identifier = parse_operator_identifier(identifier)
+    if id_type == "id":
+        operator_id = parsed_identifier
+    else:
         service = OperatorService()
-        operator_id = await service.onchain.find_operator_by_address(identifier)
+        operator_id = await service.onchain.find_operator_by_address(parsed_identifier)
         if operator_id is None:
             raise HTTPException(status_code=404, detail="Operator not found")
-    else:
-        raise HTTPException(status_code=400, detail="Invalid identifier format")
 
     deleted = await delete_operator(operator_id)
     if not deleted:
@@ -441,15 +432,14 @@ async def unsave_operator_endpoint(identifier: str):
 @router.get("/operator/{identifier}/saved")
 async def check_operator_saved(identifier: str):
     """Check if an operator is in the saved list."""
-    if identifier.isdigit():
-        operator_id = int(identifier)
-    elif identifier.startswith("0x"):
+    id_type, parsed_identifier = parse_operator_identifier(identifier)
+    if id_type == "id":
+        operator_id = parsed_identifier
+    else:
         service = OperatorService()
-        operator_id = await service.onchain.find_operator_by_address(identifier)
+        operator_id = await service.onchain.find_operator_by_address(parsed_identifier)
         if operator_id is None:
             return {"saved": False}
-    else:
-        raise HTTPException(status_code=400, detail="Invalid identifier format")
 
     saved = await is_operator_saved(operator_id)
     return {"saved": saved, "operator_id": operator_id}
@@ -464,15 +454,13 @@ async def refresh_operator_endpoint(identifier: str):
     logger.info(f"Refreshing operator: {identifier}")
     service = OperatorService()
 
-    # Determine operator ID
-    if identifier.isdigit():
-        operator_id = int(identifier)
-    elif identifier.startswith("0x"):
-        operator_id = await service.onchain.find_operator_by_address(identifier)
+    id_type, parsed_identifier = parse_operator_identifier(identifier)
+    if id_type == "id":
+        operator_id = parsed_identifier
+    else:
+        operator_id = await service.onchain.find_operator_by_address(parsed_identifier)
         if operator_id is None:
             raise HTTPException(status_code=404, detail="Operator not found")
-    else:
-        raise HTTPException(status_code=400, detail="Invalid identifier format")
 
     # Check if operator is saved
     if not await is_operator_saved(operator_id):
