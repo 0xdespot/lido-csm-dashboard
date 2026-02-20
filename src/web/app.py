@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..core.version import __version__
 from .routes import router
 
 # Configure logging
@@ -22,7 +23,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="CSM Operator Dashboard",
         description="Track your Lido CSM validator earnings",
-        version="0.5.0",
+        version=__version__,
     )
 
     # Add request logging middleware
@@ -55,8 +56,7 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def index():
         logger.debug("Serving index page")
-        return """
-<!DOCTYPE html>
+        html = """
 <html>
 <head>
     <title>CSM Operator Dashboard</title>
@@ -65,7 +65,10 @@ def create_app() -> FastAPI:
 </head>
 <body class="bg-gray-900 text-white min-h-screen p-8">
     <div class="max-w-4xl mx-auto">
-        <h1 class="text-3xl font-bold mb-2">CSM Operator Dashboard</h1>
+        <div class="flex justify-between items-start mb-2">
+            <h1 class="text-3xl font-bold">CSM Operator Dashboard</h1>
+            <span class="text-xs text-gray-500">v__APP_VERSION__</span>
+        </div>
         <p class="text-gray-400 mb-8">Track your Lido Community Staking Module validator earnings</p>
 
         <form id="lookup-form" class="mb-8">
@@ -1706,5 +1709,6 @@ def create_app() -> FastAPI:
 </body>
 </html>
         """
+        return html.replace("__APP_VERSION__", __version__)
 
     return app

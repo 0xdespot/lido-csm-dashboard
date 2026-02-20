@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ..core.types import OperatorRewards
+from ..core.version import __version__
 from ..services.operator_service import OperatorService
 
 app = typer.Typer(
@@ -28,6 +29,7 @@ def run_async(coro):
 def format_as_api_json(rewards: OperatorRewards, include_validators: bool = False, include_withdrawals: bool = False) -> dict:
     """Format rewards data in the same structure as the API endpoint."""
     result = {
+        "version": __version__,
         "operator_id": rewards.node_operator_id,
         "manager_address": rewards.manager_address,
         "reward_address": rewards.reward_address,
@@ -256,6 +258,8 @@ def rewards(
             f"Manager: {rewards.manager_address}\n"
             f"Rewards: {rewards.reward_address}",
             title="Operator Info",
+            subtitle=f"[dim]v{__version__}[/dim]",
+            subtitle_align="right",
         )
     )
 

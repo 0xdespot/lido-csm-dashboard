@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 
+from ..core.version import __version__
 from ..data.database import (
     delete_operator,
     get_saved_operators,
@@ -50,6 +51,7 @@ async def get_operator(
         raise HTTPException(status_code=404, detail="Operator not found")
 
     result = {
+        "version": __version__,
         "operator_id": rewards.node_operator_id,
         "manager_address": rewards.manager_address,
         "reward_address": rewards.reward_address,
