@@ -6,7 +6,9 @@ from pydantic import ValidationError
 
 from src.core.types import (
     APYMetrics,
+    BondEvent,
     BondSummary,
+    CapitalEfficiency,
     DistributionFrame,
     HealthStatus,
     OperatorRewards,
@@ -175,6 +177,86 @@ class TestWithdrawalEvent:
         """Test that all fields are required for WithdrawalEvent."""
         with pytest.raises(ValidationError):
             WithdrawalEvent()  # Missing all required fields
+
+
+class TestBondEvent:
+    """Tests for the BondEvent model."""
+
+    def test_bond_event_creation(self):
+        """Test creating a BondEvent instance."""
+        event = BondEvent(
+            event_type="deposit_eth",
+            block_number=21000000,
+            timestamp="2025-01-15T12:00:00+00:00",
+            amount_wei=2000000000000000000,
+            amount_eth=2.0,
+            tx_hash="0x" + "ab" * 32,
+            flow_direction=1,
+        )
+        assert event.event_type == "deposit_eth"
+        assert event.amount_eth == 2.0
+        assert event.flow_direction == 1
+
+    def test_bond_event_claim(self):
+        """Test BondEvent with claim (negative flow)."""
+        event = BondEvent(
+            event_type="claim_steth",
+            block_number=21000000,
+            timestamp="2025-01-15T12:00:00+00:00",
+            amount_wei=1500000000000000000,
+            amount_eth=1.5,
+            tx_hash="0x" + "cd" * 32,
+            flow_direction=-1,
+        )
+        assert event.flow_direction == -1
+        assert event.amount_eth == 1.5
+
+    def test_bond_event_required_fields(self):
+        """Test that all fields are required."""
+        with pytest.raises(ValidationError):
+            BondEvent()
+
+
+class TestCapitalEfficiency:
+    """Tests for the CapitalEfficiency model."""
+
+    def test_capital_efficiency_defaults(self):
+        """Test that CapitalEfficiency has all-None defaults."""
+        ce = CapitalEfficiency()
+        assert ce.total_csm_return_eth is None
+        assert ce.csm_annualized_return_pct is None
+        assert ce.steth_benchmark_return_pct is None
+        assert ce.csm_advantage_ratio is None
+        assert ce.xirr_pct is None
+        assert ce.days_operating is None
+
+    def test_capital_efficiency_with_values(self):
+        """Test CapitalEfficiency with actual values."""
+        ce = CapitalEfficiency(
+            total_csm_return_eth=0.5,
+            total_capital_deployed_eth=2.0,
+            csm_annualized_return_pct=8.42,
+            steth_benchmark_return_pct=3.21,
+            csm_advantage_ratio=2.62,
+            first_deposit_date="2024-06-01T00:00:00+00:00",
+            days_operating=412.0,
+            xirr_pct=8.15,
+        )
+        assert ce.csm_annualized_return_pct == 8.42
+        assert ce.csm_advantage_ratio == 2.62
+        assert ce.xirr_pct == 8.15
+
+    def test_apy_metrics_capital_efficiency_field(self):
+        """Test that APYMetrics includes capital_efficiency field."""
+        ce = CapitalEfficiency(csm_annualized_return_pct=8.0)
+        apy = APYMetrics(capital_efficiency=ce)
+        assert apy.capital_efficiency is not None
+        assert apy.capital_efficiency.csm_annualized_return_pct == 8.0
+
+    def test_apy_metrics_capital_efficiency_default_none(self):
+        """Test that capital_efficiency defaults to None."""
+        apy = APYMetrics()
+        assert apy.capital_efficiency is None
 
 
 class TestOperatorRewards:

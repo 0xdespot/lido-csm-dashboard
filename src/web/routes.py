@@ -143,6 +143,19 @@ async def get_operator(
                 }
                 for f in rewards.apy.frames
             ]
+        # Add capital efficiency if available
+        if rewards.apy.capital_efficiency:
+            ce = rewards.apy.capital_efficiency
+            result["apy"]["capital_efficiency"] = {
+                "total_csm_return_eth": ce.total_csm_return_eth,
+                "total_capital_deployed_eth": ce.total_capital_deployed_eth,
+                "csm_annualized_return_pct": ce.csm_annualized_return_pct,
+                "steth_benchmark_return_pct": ce.steth_benchmark_return_pct,
+                "csm_advantage_ratio": ce.csm_advantage_ratio,
+                "first_deposit_date": ce.first_deposit_date,
+                "days_operating": ce.days_operating,
+                "xirr_pct": ce.xirr_pct,
+            }
 
     # Add withdrawal history if withdrawals=true (already fetched during data gathering)
     if withdrawals and rewards.withdrawals:
@@ -363,6 +376,19 @@ async def save_operator_endpoint(identifier: str):
                 }
                 for f in rewards.apy.frames
             ]
+        # Include capital efficiency if available
+        if rewards.apy.capital_efficiency:
+            ce = rewards.apy.capital_efficiency
+            data["apy"]["capital_efficiency"] = {
+                "total_csm_return_eth": ce.total_csm_return_eth,
+                "total_capital_deployed_eth": ce.total_capital_deployed_eth,
+                "csm_annualized_return_pct": ce.csm_annualized_return_pct,
+                "steth_benchmark_return_pct": ce.steth_benchmark_return_pct,
+                "csm_advantage_ratio": ce.csm_advantage_ratio,
+                "first_deposit_date": ce.first_deposit_date,
+                "days_operating": ce.days_operating,
+                "xirr_pct": ce.xirr_pct,
+            }
 
     if rewards.health:
         data["health"] = {
@@ -543,6 +569,19 @@ async def refresh_operator_endpoint(identifier: str):
                 }
                 for f in rewards.apy.frames
             ]
+        # Include capital efficiency if available
+        if rewards.apy.capital_efficiency:
+            ce = rewards.apy.capital_efficiency
+            data["apy"]["capital_efficiency"] = {
+                "total_csm_return_eth": ce.total_csm_return_eth,
+                "total_capital_deployed_eth": ce.total_capital_deployed_eth,
+                "csm_annualized_return_pct": ce.csm_annualized_return_pct,
+                "steth_benchmark_return_pct": ce.steth_benchmark_return_pct,
+                "csm_advantage_ratio": ce.csm_advantage_ratio,
+                "first_deposit_date": ce.first_deposit_date,
+                "days_operating": ce.days_operating,
+                "xirr_pct": ce.xirr_pct,
+            }
 
     if rewards.health:
         data["health"] = {

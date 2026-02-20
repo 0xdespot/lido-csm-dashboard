@@ -22,7 +22,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="CSM Operator Dashboard",
         description="Track your Lido CSM validator earnings",
-        version="0.4.3",
+        version="0.5.0",
     )
 
     # Add request logging middleware
@@ -353,6 +353,32 @@ def create_app() -> FastAPI:
                         <span class="text-green-400">~<span id="next-dist-eth">--</span> stETH</span>
                     </div>
                 </div>
+            </div>
+
+            <!-- Capital Efficiency Section -->
+            <div id="capital-efficiency-section" class="hidden mt-6 bg-gray-800 rounded-lg p-6">
+                <h3 class="text-lg font-bold mb-4">Capital Efficiency</h3>
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div class="bg-gray-700 rounded-lg p-4 text-center">
+                        <p class="text-gray-400 text-sm mb-1">CSM Return</p>
+                        <p id="ce-csm-return" class="text-2xl font-bold text-green-400">--%</p>
+                        <p class="text-gray-500 text-xs mt-1">Annualized</p>
+                    </div>
+                    <div class="bg-gray-700 rounded-lg p-4 text-center">
+                        <p class="text-gray-400 text-sm mb-1">stETH Holding</p>
+                        <p id="ce-steth-return" class="text-2xl font-bold text-gray-300">--%</p>
+                        <p class="text-gray-500 text-xs mt-1">Same period avg</p>
+                    </div>
+                </div>
+                <div id="ce-advantage-row" class="text-center mb-3">
+                    <span class="text-gray-400 text-sm">CSM Advantage: </span>
+                    <span id="ce-advantage" class="text-lg font-bold">--</span>
+                </div>
+                <div class="flex justify-center gap-6 text-sm text-gray-400">
+                    <span>XIRR: <span id="ce-xirr" class="text-white">--</span></span>
+                    <span>Operating: <span id="ce-days" class="text-white">--</span></span>
+                </div>
+                <p class="text-xs text-gray-500 mt-3 text-center">Compares your CSM returns (rewards + bond growth) against simply holding stETH</p>
             </div>
 
             <!-- Distribution History Section -->
@@ -703,6 +729,30 @@ def create_app() -> FastAPI:
                 }
 
                 healthSection.classList.remove('hidden');
+            }
+
+            // Capital Efficiency (if available in data)
+            if (data.apy?.capital_efficiency) {
+                const ce = data.apy.capital_efficiency;
+                const ceSection = document.getElementById('capital-efficiency-section');
+                if (ce.csm_annualized_return_pct !== null && ce.csm_annualized_return_pct !== undefined) {
+                    document.getElementById('ce-csm-return').textContent = ce.csm_annualized_return_pct.toFixed(2) + '%';
+                }
+                if (ce.steth_benchmark_return_pct !== null && ce.steth_benchmark_return_pct !== undefined) {
+                    document.getElementById('ce-steth-return').textContent = ce.steth_benchmark_return_pct.toFixed(2) + '%';
+                }
+                if (ce.csm_advantage_ratio !== null && ce.csm_advantage_ratio !== undefined) {
+                    const advEl = document.getElementById('ce-advantage');
+                    advEl.textContent = ce.csm_advantage_ratio.toFixed(2) + 'x';
+                    advEl.className = ce.csm_advantage_ratio >= 1.0 ? 'text-lg font-bold text-green-400' : 'text-lg font-bold text-red-400';
+                }
+                if (ce.xirr_pct !== null && ce.xirr_pct !== undefined) {
+                    document.getElementById('ce-xirr').textContent = ce.xirr_pct.toFixed(2) + '%';
+                }
+                if (ce.days_operating !== null && ce.days_operating !== undefined) {
+                    document.getElementById('ce-days').textContent = Math.round(ce.days_operating) + ' days';
+                }
+                ceSection.classList.remove('hidden');
             }
 
             // Distribution History (if frames available in cached data)
@@ -1209,6 +1259,30 @@ def create_app() -> FastAPI:
                 historyTable.classList.remove('hidden');
                 historyLoaded = true;
                 loadHistoryBtn.textContent = 'Hide History';
+
+                // Capital Efficiency (loaded alongside history)
+                if (data.apy?.capital_efficiency) {
+                    const ce = data.apy.capital_efficiency;
+                    const ceSection = document.getElementById('capital-efficiency-section');
+                    if (ce.csm_annualized_return_pct !== null && ce.csm_annualized_return_pct !== undefined) {
+                        document.getElementById('ce-csm-return').textContent = ce.csm_annualized_return_pct.toFixed(2) + '%';
+                    }
+                    if (ce.steth_benchmark_return_pct !== null && ce.steth_benchmark_return_pct !== undefined) {
+                        document.getElementById('ce-steth-return').textContent = ce.steth_benchmark_return_pct.toFixed(2) + '%';
+                    }
+                    if (ce.csm_advantage_ratio !== null && ce.csm_advantage_ratio !== undefined) {
+                        const advEl = document.getElementById('ce-advantage');
+                        advEl.textContent = ce.csm_advantage_ratio.toFixed(2) + 'x';
+                        advEl.className = ce.csm_advantage_ratio >= 1.0 ? 'text-lg font-bold text-green-400' : 'text-lg font-bold text-red-400';
+                    }
+                    if (ce.xirr_pct !== null && ce.xirr_pct !== undefined) {
+                        document.getElementById('ce-xirr').textContent = ce.xirr_pct.toFixed(2) + '%';
+                    }
+                    if (ce.days_operating !== null && ce.days_operating !== undefined) {
+                        document.getElementById('ce-days').textContent = Math.round(ce.days_operating) + ' days';
+                    }
+                    ceSection.classList.remove('hidden');
+                }
             } catch (err) {
                 if (isAbortError(err)) return;  // Page is unloading, ignore
                 historyLoading.classList.add('hidden');

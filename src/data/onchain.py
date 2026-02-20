@@ -797,6 +797,104 @@ class OnChainDataProvider:
 
         return sorted(all_events, key=lambda e: e["blockNumber"])
 
+    # Mapping from event name to (flow_direction, event_type_key)
+    _BOND_EVENT_MAP = {
+        "BondDepositedETH": (1, "deposit_eth"),
+        "BondDepositedStETH": (1, "deposit_steth"),
+        "BondDepositedWstETH": (1, "deposit_wsteth"),
+        "BondClaimedStETH": (-1, "claim_steth"),
+        "BondClaimedUnstETH": (-1, "claim_unsteth"),
+        "BondClaimedWstETH": (-1, "claim_wsteth"),
+        "BondBurned": (-1, "burned"),
+        "BondCharged": (-1, "charged"),
+    }
+
+    @cached(ttl=3600)
+    async def get_bond_event_history(
+        self, operator_id: int, start_block: int | None = None
+    ) -> list[dict]:
+        """Fetch all bond deposit/claim/burn events for an operator.
+
+        Returns list of dicts sorted by block number, each containing:
+        event_type, block_number, timestamp, amount_wei, amount_eth, tx_hash, flow_direction
+        """
+        from datetime import datetime as dt_cls
+        from datetime import timezone as tz
+
+        if start_block is None:
+            start_block = 20873000  # CSM deployment block
+
+        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
+        all_events = []
+        chunk_size = 10000
+
+        for event_name, (flow_dir, event_type_key) in self._BOND_EVENT_MAP.items():
+            event_obj = getattr(self.csaccounting.events, event_name, None)
+            if event_obj is None:
+                continue
+
+            consecutive_failures = 0
+            for from_blk in range(start_block, current_block, chunk_size):
+                to_blk = min(from_blk + chunk_size - 1, current_block)
+                try:
+                    logs = await asyncio.to_thread(
+                        partial(
+                            event_obj.get_logs,
+                            from_block=from_blk,
+                            to_block=to_blk,
+                            argument_filters={"nodeOperatorId": operator_id},
+                        )
+                    )
+                    for log in logs:
+                        # BondBurned/BondCharged use "burnedAmount"/"chargedAmount" as actual amount
+                        if event_name == "BondBurned":
+                            amount_wei = log["args"]["burnedAmount"]
+                        elif event_name == "BondCharged":
+                            amount_wei = log["args"]["chargedAmount"]
+                        else:
+                            amount_wei = log["args"]["amount"]
+
+                        all_events.append({
+                            "event_name": event_name,
+                            "event_type": event_type_key,
+                            "block_number": log["blockNumber"],
+                            "amount_wei": amount_wei,
+                            # wstETH amounts are approximate as ETH (wstETH deposits are rare in CSM)
+                            "amount_eth": amount_wei / 10**18,
+                            "tx_hash": log["transactionHash"].hex(),
+                            "flow_direction": flow_dir,
+                        })
+                    consecutive_failures = 0
+                except Exception as e:
+                    consecutive_failures += 1
+                    logger.debug(
+                        f"Bond event query failed for {event_name} blocks {from_blk}-{to_blk}: {e}"
+                    )
+                    if consecutive_failures >= 3:
+                        break
+
+        # Sort by block number and enrich with timestamps
+        all_events.sort(key=lambda x: x["block_number"])
+
+        # Batch-fetch timestamps for unique blocks
+        unique_blocks = list({e["block_number"] for e in all_events})
+        block_timestamps = {}
+        for blk_num in unique_blocks:
+            try:
+                block_data = await asyncio.to_thread(
+                    partial(self.w3.eth.get_block, blk_num)
+                )
+                block_timestamps[blk_num] = dt_cls.fromtimestamp(
+                    block_data["timestamp"], tz=tz.utc
+                ).isoformat()
+            except Exception:
+                block_timestamps[blk_num] = ""
+
+        for event in all_events:
+            event["timestamp"] = block_timestamps.get(event["block_number"], "")
+
+        return all_events
+
     async def _enrich_withdrawal_events(self, events: list[dict]) -> list[dict]:
         """Add timestamps and ETH values to withdrawal events."""
         from datetime import datetime, timezone

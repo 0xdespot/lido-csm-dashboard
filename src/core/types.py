@@ -83,6 +83,31 @@ class WithdrawalEvent(BaseModel):
     claim_timestamp: str | None = None  # When the claim happened
 
 
+class BondEvent(BaseModel):
+    """A single bond deposit, claim, burn, or charge event."""
+
+    event_type: str  # "deposit_eth", "deposit_steth", "deposit_wsteth", "claim_steth", etc.
+    block_number: int
+    timestamp: str  # ISO format
+    amount_wei: int
+    amount_eth: float
+    tx_hash: str
+    flow_direction: int  # +1 deposits, -1 claims/burns
+
+
+class CapitalEfficiency(BaseModel):
+    """Capital efficiency metrics comparing CSM returns to plain stETH holding."""
+
+    total_csm_return_eth: float | None = None  # Total returns (rewards + bond appreciation)
+    total_capital_deployed_eth: float | None = None  # Sum of all deposits
+    csm_annualized_return_pct: float | None = None  # Annualized CSM return %
+    steth_benchmark_return_pct: float | None = None  # What stETH holding earned over same period
+    csm_advantage_ratio: float | None = None  # CSM / stETH (e.g., 1.5x)
+    first_deposit_date: str | None = None
+    days_operating: float | None = None
+    xirr_pct: float | None = None  # Full XIRR
+
+
 class APYMetrics(BaseModel):
     """APY calculations for an operator.
 
@@ -145,6 +170,9 @@ class APYMetrics(BaseModel):
     previous_net_total_eth: float | None = None
     current_net_total_eth: float | None = None
     lifetime_net_total_eth: float | None = None
+
+    # Capital efficiency metrics (only populated with --history flag)
+    capital_efficiency: CapitalEfficiency | None = None
 
 
 class StrikeSummary(BaseModel):
