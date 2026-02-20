@@ -302,7 +302,7 @@ class OperatorService:
 
         # 4. Calculate bond stETH earnings (from stETH rebasing)
         # Formula: bond_eth * (apr / 100) * (duration_days / 365)
-        # Uses historical APR from Lido subgraph when available
+        # Uses historical APR from TokenRebased events when available
         # When include_history=True and we have per-frame validator counts, use accurate bond
         previous_bond_eth = None
         current_bond_eth = None
@@ -314,8 +314,8 @@ class OperatorService:
         current_bond_apr = None
         previous_bond_apy = None  # Bond APY for previous frame (for accurate previous_net_apy)
 
-        # Fetch historical APR data (returns [] if no API key)
-        historical_apr_data = await self.lido_api.get_historical_apr_data()
+        # Fetch historical APR data from TokenRebased events
+        historical_apr_data = await self.onchain.get_historical_apr_data()
 
         if bond_eth >= MIN_BOND_ETH:
             # Previous frame bond earnings
