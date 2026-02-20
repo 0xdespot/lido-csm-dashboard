@@ -22,7 +22,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="CSM Operator Dashboard",
         description="Track your Lido CSM validator earnings",
-        version="0.4.3",
+        version="0.4.3.1",
     )
 
     # Add request logging middleware
