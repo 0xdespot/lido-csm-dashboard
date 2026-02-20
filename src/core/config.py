@@ -9,7 +9,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     # RPC Configuration
     eth_rpc_url: str = "https://eth.llamarpc.com"
@@ -20,9 +22,6 @@ class Settings(BaseSettings):
 
     # Etherscan API (optional, for historical event queries)
     etherscan_api_key: str | None = None
-
-    # The Graph API (optional, for historical stETH APR data)
-    thegraph_api_key: str | None = None
 
     # Data Sources
     rewards_proofs_url: str = (
