@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.3] - 2026-02-20
+
+### Changed
+- **Bond APY now uses on-chain data** — Historical stETH APR is fetched directly from `TokenRebased` events via RPC, replacing the previous The Graph subgraph dependency. Bond APY per distribution frame now works out of the box with no extra API keys.
+
+### Removed
+- `THEGRAPH_API_KEY` configuration option (no longer needed; existing `.env` files with it are safely ignored)
+
 ## [0.4.2] - 2026-02-17
 
 ### Added
