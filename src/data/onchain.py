@@ -724,6 +724,79 @@ class OnChainDataProvider:
 
         return sorted(all_events, key=lambda x: x["block"])
 
+    @cached(ttl=3600)  # Cache for 1 hour since historical events don't change
+    async def get_historical_apr_data(self) -> list[dict]:
+        """Fetch historical stETH APR data from TokenRebased events via RPC.
+
+        Returns list of {block, apr, blockTime} sorted by block ascending.
+        Returns empty list if RPC log queries fail.
+        """
+        try:
+            events = await self._fetch_token_rebased_events()
+        except Exception as e:
+            logger.warning(f"Failed to fetch TokenRebased events: {e}")
+            return []
+
+        results = []
+        for event in events:
+            args = event["args"]
+            pre_total_shares = args["preTotalShares"]
+            pre_total_ether = args["preTotalEther"]
+            post_total_shares = args["postTotalShares"]
+            post_total_ether = args["postTotalEther"]
+            time_elapsed = args["timeElapsed"]
+
+            if pre_total_shares == 0 or post_total_shares == 0 or time_elapsed == 0:
+                continue
+
+            # APR = ((postEther/postShares) / (preEther/preShares) - 1) * (365 * 86400 / timeElapsed) * 100
+            pre_rate = pre_total_ether / pre_total_shares
+            post_rate = post_total_ether / post_total_shares
+            apr = (post_rate / pre_rate - 1) * (365 * 86400 / time_elapsed) * 100
+
+            results.append({
+                "block": str(event["blockNumber"]),
+                "apr": str(apr),
+                "blockTime": str(args["reportTimestamp"]),
+            })
+
+        return results
+
+    async def _fetch_token_rebased_events(
+        self, start_block: int = 20_000_000, chunk_size: int = 50_000
+    ) -> list:
+        """Fetch TokenRebased events from stETH contract in chunks."""
+        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
+        all_events = []
+        consecutive_failures = 0
+        max_consecutive_failures = 3
+
+        for from_block in range(start_block, current_block, chunk_size):
+            to_block = min(from_block + chunk_size - 1, current_block)
+            try:
+                events = await asyncio.to_thread(
+                    partial(
+                        self.steth.events.TokenRebased.get_logs,
+                        from_block=from_block,
+                        to_block=to_block,
+                    )
+                )
+                all_events.extend(events)
+                consecutive_failures = 0
+            except Exception as e:
+                consecutive_failures += 1
+                logger.debug(
+                    f"TokenRebased event query failed for blocks {from_block}-{to_block}: {e}"
+                )
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.debug(
+                        f"Giving up on TokenRebased event queries after "
+                        f"{max_consecutive_failures} consecutive failures"
+                    )
+                    break
+
+        return sorted(all_events, key=lambda e: e["blockNumber"])
+
     async def _enrich_withdrawal_events(self, events: list[dict]) -> list[dict]:
         """Add timestamps and ETH values to withdrawal events."""
         from datetime import datetime, timezone
