@@ -23,7 +23,6 @@ class TestSettings:
         assert isinstance(settings.beacon_api_url, str)
         assert settings.beacon_api_key is None or isinstance(settings.beacon_api_key, str)
         assert settings.etherscan_api_key is None or isinstance(settings.etherscan_api_key, str)
-        assert settings.thegraph_api_key is None or isinstance(settings.thegraph_api_key, str)
         assert isinstance(settings.cache_ttl_seconds, int)
         assert settings.cache_ttl_seconds > 0
 
@@ -62,14 +61,12 @@ class TestSettings:
             {
                 "BEACON_API_KEY": "beacon_key_123",
                 "ETHERSCAN_API_KEY": "etherscan_key_456",
-                "THEGRAPH_API_KEY": "graph_key_789",
             },
         ):
             settings = Settings()
 
         assert settings.beacon_api_key == "beacon_key_123"
         assert settings.etherscan_api_key == "etherscan_key_456"
-        assert settings.thegraph_api_key == "graph_key_789"
 
 
 class TestGetSettings:
