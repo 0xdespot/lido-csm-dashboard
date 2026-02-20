@@ -28,5 +28,4 @@
   <Config Name="Beacon API URL" Target="BEACON_API_URL" Default="https://beaconcha.in/api/v1" Mode="" Description="Beacon chain API endpoint (default: beaconcha.in)" Type="Variable" Display="always" Required="false" Mask="false">https://beaconcha.in/api/v1</Config>
   <Config Name="Beacon API Key" Target="BEACON_API_KEY" Default="" Mode="" Description="Optional - beaconcha.in API key for higher rate limits" Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="Etherscan API Key" Target="ETHERSCAN_API_KEY" Default="" Mode="" Description="Optional - enables withdrawal history tracking" Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="TheGraph API Key" Target="THEGRAPH_API_KEY" Default="" Mode="" Description="Optional - enables historical stETH APR data" Type="Variable" Display="always" Required="false" Mask="true"/>
 </Container>
