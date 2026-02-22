@@ -14,17 +14,20 @@ def calculate_capital_efficiency(
     historical_apr_data: list[dict] | None = None,
     distribution_flows: list[dict] | None = None,
     get_average_apr_for_range=None,
+    xirr_terminal_value: float | None = None,
 ) -> dict:
     """Calculate capital efficiency metrics for a CSM operator.
 
     Args:
         bond_events: List of bond events from get_bond_event_history()
         total_rewards_eth: Total lifetime distributed rewards in ETH
-        current_bond_eth: Current bond value in ETH
+        current_bond_eth: Current bond value in ETH (bond only, no unclaimed rewards)
         steth_apr: Current stETH APR (percentage)
         historical_apr_data: Historical APR data for benchmark calculation
         distribution_flows: List of {date, amount_eth} for XIRR calculation
         get_average_apr_for_range: Function to get average APR for a time range
+        xirr_terminal_value: Terminal value for XIRR (bond + unclaimed rewards).
+            If None, uses current_bond_eth.
 
     Returns:
         Dict with capital efficiency fields (matching CapitalEfficiency model)
@@ -98,11 +101,12 @@ def calculate_capital_efficiency(
     if steth_benchmark and steth_benchmark > 0:
         csm_advantage = round(csm_annualized / steth_benchmark, 2)
 
-    # XIRR calculation
+    # XIRR calculation — use terminal value (bond + unclaimed) if provided
     xirr_pct = None
+    terminal = xirr_terminal_value if xirr_terminal_value is not None else current_bond_eth
     if distribution_flows:
         cash_flows = _build_xirr_cash_flows(
-            bond_events, distribution_flows, current_bond_eth
+            bond_events, distribution_flows, terminal
         )
         if cash_flows:
             xirr_pct = calculate_xirr(cash_flows)
@@ -131,10 +135,9 @@ def _build_xirr_cash_flows(
     """
     cash_flows = []
 
-    # Bond deposits -> negative cash flows
+    # Bond events -> deposits are negative, claims are positive
+    _CLAIM_TYPES = {"claim_steth", "claim_unsteth", "claim_wsteth"}
     for e in bond_events:
-        if e["flow_direction"] != 1:
-            continue
         ts = e.get("timestamp", "")
         if not ts:
             continue
@@ -142,7 +145,13 @@ def _build_xirr_cash_flows(
             dt = datetime.fromisoformat(ts)
         except (ValueError, TypeError):
             continue
-        cash_flows.append((dt, -e["amount_eth"]))
+        if e["flow_direction"] == 1:
+            # Deposit = capital deployed (negative cash flow)
+            cash_flows.append((dt, -e["amount_eth"]))
+        elif e["event_type"] in _CLAIM_TYPES:
+            # Bond claim = capital returned (positive cash flow)
+            cash_flows.append((dt, e["amount_eth"]))
+        # Burns/charges are already reflected in reduced terminal value
 
     # Reward distributions -> positive cash flows
     for flow in distribution_flows:

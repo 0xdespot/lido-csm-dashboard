@@ -4,6 +4,7 @@ import pytest
 from datetime import datetime, timezone, timedelta
 
 from src.services.capital_efficiency import (
+    _build_xirr_cash_flows,
     calculate_capital_efficiency,
     calculate_xirr,
 )
@@ -252,3 +253,112 @@ class TestCalculateCapitalEfficiency:
         )
         assert result["total_capital_deployed_eth"] == 3.5
         assert result["days_operating"] == pytest.approx(365, abs=2)
+
+    def test_xirr_includes_bond_claims(self):
+        """Bond claims must appear as positive XIRR flows."""
+        now = datetime.now(timezone.utc)
+        deposit_date = now - timedelta(days=365)
+        claim_date = now - timedelta(days=180)
+
+        events = self._make_bond_events(
+            deposits=[(deposit_date, 3.0)],
+            claims=[(claim_date, 1.0)],
+        )
+        distribution_flows = [
+            {"date": now - timedelta(days=90), "amount_eth": 0.05},
+        ]
+        result = calculate_capital_efficiency(
+            bond_events=events,
+            total_rewards_eth=0.05,
+            current_bond_eth=2.10,  # 2 ETH remaining + rebase + unclaimed
+            steth_apr=2.7,
+            distribution_flows=distribution_flows,
+        )
+        # With bond claims included, XIRR should reflect the true return
+        # (above stETH base rate since CSM adds rewards on top)
+        assert result["xirr_pct"] is not None
+        assert result["xirr_pct"] > 2.7
+
+
+class TestBuildXirrCashFlows:
+    """Tests for _build_xirr_cash_flows specifically."""
+
+    def test_deposits_are_negative(self):
+        """Bond deposits should be negative cash flows."""
+        now = datetime.now(timezone.utc)
+        bond_events = [
+            {
+                "flow_direction": 1,
+                "event_type": "deposit_eth",
+                "amount_eth": 2.0,
+                "timestamp": (now - timedelta(days=365)).isoformat(),
+            },
+        ]
+        flows = _build_xirr_cash_flows(bond_events, [], 2.0)
+        deposits = [f for f in flows if f[1] < 0]
+        assert len(deposits) == 1
+        assert deposits[0][1] == -2.0
+
+    def test_claims_are_positive(self):
+        """Bond claims should be positive cash flows."""
+        now = datetime.now(timezone.utc)
+        bond_events = [
+            {
+                "flow_direction": 1,
+                "event_type": "deposit_eth",
+                "amount_eth": 3.0,
+                "timestamp": (now - timedelta(days=365)).isoformat(),
+            },
+            {
+                "flow_direction": -1,
+                "event_type": "claim_steth",
+                "amount_eth": 1.0,
+                "timestamp": (now - timedelta(days=180)).isoformat(),
+            },
+        ]
+        flows = _build_xirr_cash_flows(bond_events, [], 2.0)
+        claims = [f for f in flows if f[1] == 1.0]
+        assert len(claims) == 1
+
+    def test_burns_excluded(self):
+        """Burned/charged events should NOT be cash flows (reflected in terminal value)."""
+        now = datetime.now(timezone.utc)
+        bond_events = [
+            {
+                "flow_direction": 1,
+                "event_type": "deposit_eth",
+                "amount_eth": 2.0,
+                "timestamp": (now - timedelta(days=365)).isoformat(),
+            },
+            {
+                "flow_direction": -1,
+                "event_type": "burned",
+                "amount_eth": 0.1,
+                "timestamp": (now - timedelta(days=90)).isoformat(),
+            },
+        ]
+        flows = _build_xirr_cash_flows(bond_events, [], 1.9)
+        # Should have: 1 deposit (negative) + 1 terminal (positive) = 2 flows
+        # The burn should NOT appear as a separate flow
+        assert len(flows) == 2
+        amounts = [f[1] for f in flows]
+        assert -2.0 in amounts
+        assert 1.9 in amounts
+
+    def test_terminal_value_includes_full_position(self):
+        """Terminal value should be the last positive flow at today's date."""
+        now = datetime.now(timezone.utc)
+        bond_events = [
+            {
+                "flow_direction": 1,
+                "event_type": "deposit_eth",
+                "amount_eth": 2.0,
+                "timestamp": (now - timedelta(days=365)).isoformat(),
+            },
+        ]
+        # Terminal value = bond + unclaimed rewards
+        flows = _build_xirr_cash_flows(bond_events, [], 2.15)
+        terminal = flows[-1]
+        assert terminal[1] == 2.15
+        # Terminal date should be approximately now
+        assert abs((terminal[0] - now).total_seconds()) < 5

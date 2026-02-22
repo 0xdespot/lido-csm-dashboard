@@ -125,6 +125,8 @@ class OperatorService:
                 bond_eth=bond.current_bond_eth,
                 curve_id=curve_id,
                 include_history=include_history,
+                distributed_shares=distributed,
+                unclaimed_shares=unclaimed_shares,
             )
 
             # Step 11: Calculate health status
@@ -178,6 +180,8 @@ class OperatorService:
         bond_eth: Decimal,
         curve_id: int = 0,
         include_history: bool = False,
+        distributed_shares: int = 0,
+        unclaimed_shares: int = 0,
     ) -> APYMetrics:
         """Calculate APY metrics for an operator using historical IPFS data.
 
@@ -497,15 +501,30 @@ class OperatorService:
             try:
                 bond_events = await self.onchain.get_bond_event_history(operator_id)
                 if bond_events:
-                    # Build distribution flows from frame data
+                    # Determine what fraction of rewards have been claimed
+                    total_frame_shares = sum(f.distributed_rewards for f in frames)
+                    claimed_ratio = (
+                        distributed_shares / total_frame_shares
+                        if total_frame_shares > 0
+                        else 0.0
+                    )
+                    claimed_ratio = min(claimed_ratio, 1.0)
+
+                    # Only claimed rewards are past cash flows (at frame dates)
                     distribution_flows = []
                     for f in frames:
                         f_eth_val = await self.onchain.shares_to_eth(f.distributed_rewards)
                         flow_date = epoch_to_dt(f.end_epoch)
                         distribution_flows.append({
                             "date": flow_date,
-                            "amount_eth": float(f_eth_val),
+                            "amount_eth": float(f_eth_val) * claimed_ratio,
                         })
+
+                    # Terminal value = current bond + unclaimed rewards
+                    unclaimed_reward_eth = float(
+                        await self.onchain.shares_to_eth(unclaimed_shares)
+                    )
+                    terminal_value = float(bond_eth) + unclaimed_reward_eth
 
                     ce_result = calculate_capital_efficiency(
                         bond_events=bond_events,
@@ -515,6 +534,7 @@ class OperatorService:
                         historical_apr_data=historical_apr_data,
                         distribution_flows=distribution_flows,
                         get_average_apr_for_range=self.lido_api.get_average_apr_for_range,
+                        xirr_terminal_value=terminal_value,
                     )
                     if ce_result:
                         capital_efficiency = CapitalEfficiency(**ce_result)

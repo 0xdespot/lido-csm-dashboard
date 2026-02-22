@@ -910,8 +910,8 @@ class OnChainDataProvider:
                     block["timestamp"], tz=timezone.utc
                 ).isoformat()
 
-                # Convert shares to ETH (using current rate as approximation)
-                eth_value = await self.shares_to_eth(event["value"])
+                # stETH Transfer 'value' is already ETH-denominated (rebased token amount)
+                eth_value = Decimal(event["value"]) / Decimal(10**18)
 
                 enriched.append(
                     {
