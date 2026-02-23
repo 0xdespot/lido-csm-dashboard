@@ -126,12 +126,17 @@ def calculate_capital_efficiency(
 def _build_xirr_cash_flows(
     bond_events: list[dict],
     distribution_flows: list[dict],
-    current_bond_eth: float,
+    terminal_value_eth: float,
 ) -> list[tuple[datetime, float]]:
     """Build cash flow list for XIRR calculation.
 
     Bond deposits are negative (money in), reward distributions are positive (money out),
-    and current bond value is a positive terminal value at today's date.
+    and terminal_value_eth (bond + unclaimed rewards) is a positive terminal cash flow today.
+
+    Note: bond burns/penalties are NOT included as separate dated cash flows — they are
+    implicitly reflected in the lower terminal_value_eth. This is a simplification that
+    ignores the timing of burns; for operators with infrequent/small burns the impact is
+    negligible.
     """
     cash_flows = []
 
@@ -151,7 +156,7 @@ def _build_xirr_cash_flows(
         elif e["event_type"] in _CLAIM_TYPES:
             # Bond claim = capital returned (positive cash flow)
             cash_flows.append((dt, e["amount_eth"]))
-        # Burns/charges are already reflected in reduced terminal value
+        # Burns/penalties skipped — see docstring for why
 
     # Reward distributions -> positive cash flows
     for flow in distribution_flows:
@@ -165,10 +170,10 @@ def _build_xirr_cash_flows(
                     continue
             cash_flows.append((dt, amount))
 
-    # Terminal value: current bond at today's date
+    # Terminal value: bond + unclaimed rewards at today's date
     now = datetime.now(timezone.utc)
-    if current_bond_eth > 0:
-        cash_flows.append((now, current_bond_eth))
+    if terminal_value_eth > 0:
+        cash_flows.append((now, terminal_value_eth))
 
     # Need at least one negative and one positive flow
     has_negative = any(cf[1] < 0 for cf in cash_flows)
@@ -180,34 +185,16 @@ def _build_xirr_cash_flows(
     return cash_flows
 
 
-def calculate_xirr(
-    cash_flows: list[tuple[datetime, float]],
-    guess: float = 0.1,
-    tol: float = 1e-6,
-    max_iter: int = 100,
+def _newton_xirr(
+    amounts: tuple,
+    day_fracs: tuple,
+    guess: float,
+    tol: float,
+    max_iter: int,
 ) -> float | None:
-    """Calculate XIRR using Newton's method.
-
-    Args:
-        cash_flows: List of (date, amount) tuples. Negative = investment, positive = return.
-        guess: Initial rate guess (0.1 = 10%)
-        tol: Convergence tolerance
-        max_iter: Maximum iterations
-
-    Returns:
-        XIRR as percentage (e.g., 8.5 for 8.5%), or None if doesn't converge
-    """
-    if not cash_flows or len(cash_flows) < 2:
-        return None
-
-    dates, amounts = zip(*cash_flows)
-    d0 = dates[0]
-    # Day fractions from first date
-    day_fracs = [(d - d0).total_seconds() / (365.25 * 86400) for d in dates]
-
+    """Single Newton-Raphson attempt for XIRR. Returns rate (decimal) or None."""
     rate = guess
     for _ in range(max_iter):
-        # NPV and its derivative
         npv = 0.0
         dnpv = 0.0
         for amt, t in zip(amounts, day_fracs):
@@ -229,9 +216,45 @@ def calculate_xirr(
         if new_rate > 10:
             new_rate = 10
 
-        if abs(new_rate - rate) < tol:
-            return float(new_rate * 100)  # Convert to percentage
+        # Converged when rate barely changes AND NPV is near zero
+        if abs(new_rate - rate) < tol and abs(npv) < 1e-8:
+            return new_rate
 
         rate = new_rate
 
-    return None  # Did not converge
+    return None
+
+
+def calculate_xirr(
+    cash_flows: list[tuple[datetime, float]],
+    tol: float = 1e-6,
+    max_iter: int = 100,
+) -> float | None:
+    """Calculate XIRR using Newton's method with multiple initial guesses.
+
+    Args:
+        cash_flows: List of (date, amount) tuples. Negative = investment, positive = return.
+        tol: Convergence tolerance
+        max_iter: Maximum iterations per guess
+
+    Returns:
+        XIRR as percentage (e.g., 8.5 for 8.5%), or None if doesn't converge.
+        Uses 365.25 days/year (vs Excel's 365), so results may differ by ~0.07%/year.
+    """
+    if not cash_flows or len(cash_flows) < 2:
+        return None
+
+    dates, amounts = zip(*cash_flows)
+    d0 = dates[0]
+    # Year fractions from the first cash flow date (365.25 accounts for leap years;
+    # Excel XIRR uses 365, so results may differ slightly from spreadsheet validation)
+    day_fracs = [(d - d0).total_seconds() / (365.25 * 86400) for d in dates]
+
+    # Try multiple starting points — Newton's method for XIRR can diverge if the
+    # initial guess is far from the true solution.
+    for guess in (0.1, 0.0, 0.5, -0.5, 2.0):
+        result = _newton_xirr(amounts, day_fracs, guess, tol, max_iter)
+        if result is not None:
+            return float(result * 100)  # Convert to percentage
+
+    return None  # Did not converge with any starting point

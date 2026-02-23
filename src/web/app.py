@@ -365,7 +365,7 @@ def create_app() -> FastAPI:
                     <div class="bg-gray-700 rounded-lg p-4 text-center">
                         <p class="text-gray-400 text-sm mb-1">CSM Return</p>
                         <p id="ce-csm-return" class="text-2xl font-bold text-green-400">--%</p>
-                        <p class="text-gray-500 text-xs mt-1">Annualized</p>
+                        <p class="text-gray-500 text-xs mt-1">Annualized (time-weighted)</p>
                     </div>
                     <div class="bg-gray-700 rounded-lg p-4 text-center">
                         <p class="text-gray-400 text-sm mb-1">stETH Holding</p>
@@ -378,10 +378,10 @@ def create_app() -> FastAPI:
                     <span id="ce-advantage" class="text-lg font-bold">--</span>
                 </div>
                 <div class="flex justify-center gap-6 text-sm text-gray-400">
-                    <span>XIRR: <span id="ce-xirr" class="text-white">--</span></span>
+                    <span>XIRR (cash-flow): <span id="ce-xirr" class="text-white">--</span></span>
                     <span>Operating: <span id="ce-days" class="text-white">--</span></span>
                 </div>
-                <p class="text-xs text-gray-500 mt-3 text-center">Compares your CSM returns (rewards + bond growth) against simply holding stETH</p>
+                <p class="text-xs text-gray-500 mt-3 text-center">Annualized return is time-weighted; XIRR is cash-flow weighted (deposits, claims, and terminal value).</p>
             </div>
 
             <!-- Distribution History Section -->
@@ -556,6 +556,49 @@ def create_app() -> FastAPI:
             return val !== null && val !== undefined ? val.toFixed(2) + '%' : '--%';
         }
 
+        function renderCapitalEfficiency(ce) {
+            const ceSection = document.getElementById('capital-efficiency-section');
+            const csmReturnEl = document.getElementById('ce-csm-return');
+            const stethReturnEl = document.getElementById('ce-steth-return');
+            const advEl = document.getElementById('ce-advantage');
+            const xirrEl = document.getElementById('ce-xirr');
+            const daysEl = document.getElementById('ce-days');
+
+            // Reset defaults first to avoid stale values when switching operators
+            csmReturnEl.textContent = '--%';
+            stethReturnEl.textContent = '--%';
+            advEl.textContent = '--';
+            advEl.className = 'text-lg font-bold text-gray-300';
+            xirrEl.textContent = '--';
+            daysEl.textContent = '--';
+
+            if (!ce) {
+                ceSection.classList.add('hidden');
+                return;
+            }
+
+            if (ce.csm_annualized_return_pct !== null && ce.csm_annualized_return_pct !== undefined) {
+                csmReturnEl.textContent = ce.csm_annualized_return_pct.toFixed(2) + '%';
+            }
+            if (ce.steth_benchmark_return_pct !== null && ce.steth_benchmark_return_pct !== undefined) {
+                stethReturnEl.textContent = ce.steth_benchmark_return_pct.toFixed(2) + '%';
+            }
+            if (ce.csm_advantage_ratio !== null && ce.csm_advantage_ratio !== undefined) {
+                advEl.textContent = ce.csm_advantage_ratio.toFixed(2) + 'x';
+                advEl.className = ce.csm_advantage_ratio >= 1.0
+                    ? 'text-lg font-bold text-green-400'
+                    : 'text-lg font-bold text-red-400';
+            }
+            if (ce.xirr_pct !== null && ce.xirr_pct !== undefined) {
+                xirrEl.textContent = ce.xirr_pct.toFixed(2) + '%';
+            }
+            if (ce.days_operating !== null && ce.days_operating !== undefined) {
+                daysEl.textContent = Math.round(ce.days_operating) + ' days';
+            }
+
+            ceSection.classList.remove('hidden');
+        }
+
         // Reset UI to initial state
         function resetUI() {
             error.classList.add('hidden');
@@ -593,6 +636,7 @@ def create_app() -> FastAPI:
                 strikesList.classList.add('hidden');
                 strikesList.innerHTML = '';
             }
+            renderCapitalEfficiency(null);
 
             // Reset save button state
             currentOperatorSaved = false;
@@ -734,29 +778,8 @@ def create_app() -> FastAPI:
                 healthSection.classList.remove('hidden');
             }
 
-            // Capital Efficiency (if available in data)
-            if (data.apy?.capital_efficiency) {
-                const ce = data.apy.capital_efficiency;
-                const ceSection = document.getElementById('capital-efficiency-section');
-                if (ce.csm_annualized_return_pct !== null && ce.csm_annualized_return_pct !== undefined) {
-                    document.getElementById('ce-csm-return').textContent = ce.csm_annualized_return_pct.toFixed(2) + '%';
-                }
-                if (ce.steth_benchmark_return_pct !== null && ce.steth_benchmark_return_pct !== undefined) {
-                    document.getElementById('ce-steth-return').textContent = ce.steth_benchmark_return_pct.toFixed(2) + '%';
-                }
-                if (ce.csm_advantage_ratio !== null && ce.csm_advantage_ratio !== undefined) {
-                    const advEl = document.getElementById('ce-advantage');
-                    advEl.textContent = ce.csm_advantage_ratio.toFixed(2) + 'x';
-                    advEl.className = ce.csm_advantage_ratio >= 1.0 ? 'text-lg font-bold text-green-400' : 'text-lg font-bold text-red-400';
-                }
-                if (ce.xirr_pct !== null && ce.xirr_pct !== undefined) {
-                    document.getElementById('ce-xirr').textContent = ce.xirr_pct.toFixed(2) + '%';
-                }
-                if (ce.days_operating !== null && ce.days_operating !== undefined) {
-                    document.getElementById('ce-days').textContent = Math.round(ce.days_operating) + ' days';
-                }
-                ceSection.classList.remove('hidden');
-            }
+            // Capital efficiency can come from saved/refresh cache data
+            renderCapitalEfficiency(data.apy?.capital_efficiency);
 
             // Distribution History (if frames available in cached data)
             if (data.apy?.frames && data.apy.frames.length > 0) {
@@ -1263,29 +1286,8 @@ def create_app() -> FastAPI:
                 historyLoaded = true;
                 loadHistoryBtn.textContent = 'Hide History';
 
-                // Capital Efficiency (loaded alongside history)
-                if (data.apy?.capital_efficiency) {
-                    const ce = data.apy.capital_efficiency;
-                    const ceSection = document.getElementById('capital-efficiency-section');
-                    if (ce.csm_annualized_return_pct !== null && ce.csm_annualized_return_pct !== undefined) {
-                        document.getElementById('ce-csm-return').textContent = ce.csm_annualized_return_pct.toFixed(2) + '%';
-                    }
-                    if (ce.steth_benchmark_return_pct !== null && ce.steth_benchmark_return_pct !== undefined) {
-                        document.getElementById('ce-steth-return').textContent = ce.steth_benchmark_return_pct.toFixed(2) + '%';
-                    }
-                    if (ce.csm_advantage_ratio !== null && ce.csm_advantage_ratio !== undefined) {
-                        const advEl = document.getElementById('ce-advantage');
-                        advEl.textContent = ce.csm_advantage_ratio.toFixed(2) + 'x';
-                        advEl.className = ce.csm_advantage_ratio >= 1.0 ? 'text-lg font-bold text-green-400' : 'text-lg font-bold text-red-400';
-                    }
-                    if (ce.xirr_pct !== null && ce.xirr_pct !== undefined) {
-                        document.getElementById('ce-xirr').textContent = ce.xirr_pct.toFixed(2) + '%';
-                    }
-                    if (ce.days_operating !== null && ce.days_operating !== undefined) {
-                        document.getElementById('ce-days').textContent = Math.round(ce.days_operating) + ' days';
-                    }
-                    ceSection.classList.remove('hidden');
-                }
+                // Capital efficiency is loaded with history=true
+                renderCapitalEfficiency(data.apy?.capital_efficiency);
             } catch (err) {
                 if (isAbortError(err)) return;  // Page is unloading, ignore
                 historyLoading.classList.add('hidden');

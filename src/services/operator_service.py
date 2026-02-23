@@ -34,6 +34,27 @@ from ..data.rewards_tree import RewardsTreeProvider
 from ..data.strikes import StrikesProvider
 
 
+def allocate_claimed_shares_to_frames(
+    frame_shares: list[int],
+    distributed_shares: int,
+) -> list[int]:
+    """Allocate claimed shares to frames in chronological order.
+
+    We treat unclaimed rewards as coming from the most recent frames, so claimed
+    shares are applied oldest-first.
+    """
+    remaining = max(0, distributed_shares)
+    allocated: list[int] = []
+
+    for shares in frame_shares:
+        frame_total = max(0, shares)
+        claimed_for_frame = min(frame_total, remaining)
+        allocated.append(claimed_for_frame)
+        remaining -= claimed_for_frame
+
+    return allocated
+
+
 class OperatorService:
     """Orchestrates data from multiple sources to compute final rewards."""
 
@@ -501,23 +522,22 @@ class OperatorService:
             try:
                 bond_events = await self.onchain.get_bond_event_history(operator_id)
                 if bond_events:
-                    # Determine what fraction of rewards have been claimed
-                    total_frame_shares = sum(f.distributed_rewards for f in frames)
-                    claimed_ratio = (
-                        distributed_shares / total_frame_shares
-                        if total_frame_shares > 0
-                        else 0.0
+                    # Only claimed rewards are past cash flows (at frame dates).
+                    # Allocate claims oldest-first so unclaimed rewards remain in terminal value.
+                    claimed_shares_by_frame = allocate_claimed_shares_to_frames(
+                        [f.distributed_rewards for f in frames],
+                        distributed_shares,
                     )
-                    claimed_ratio = min(claimed_ratio, 1.0)
 
-                    # Only claimed rewards are past cash flows (at frame dates)
                     distribution_flows = []
-                    for f in frames:
-                        f_eth_val = await self.onchain.shares_to_eth(f.distributed_rewards)
+                    for f, claimed_shares in zip(frames, claimed_shares_by_frame):
+                        if claimed_shares <= 0:
+                            continue
+                        f_eth_val = await self.onchain.shares_to_eth(claimed_shares)
                         flow_date = epoch_to_dt(f.end_epoch)
                         distribution_flows.append({
                             "date": flow_date,
-                            "amount_eth": float(f_eth_val) * claimed_ratio,
+                            "amount_eth": float(f_eth_val),
                         })
 
                     # Terminal value = current bond + unclaimed rewards
