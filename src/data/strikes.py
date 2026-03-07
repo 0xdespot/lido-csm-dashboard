@@ -110,13 +110,19 @@ class StrikesProvider:
             pass
 
     async def _rate_limit(self) -> None:
-        """Ensure minimum interval between IPFS gateway requests."""
+        """Ensure minimum interval between IPFS gateway requests.
+
+        Claim the next available time slot while holding the lock, then sleep
+        outside the lock so other coroutines can schedule their slots concurrently.
+        """
         async with self._rate_limit_lock:
             now = time.time()
-            elapsed = now - self._last_request_time
-            if elapsed < self.MIN_REQUEST_INTERVAL:
-                await asyncio.sleep(self.MIN_REQUEST_INTERVAL - elapsed)
-            self._last_request_time = time.time()
+            next_slot = max(now, self._last_request_time + self.MIN_REQUEST_INTERVAL)
+            self._last_request_time = next_slot
+            wait_time = next_slot - now
+
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
 
     @cached(ttl=300)  # Cache CID for 5 minutes
     async def get_tree_cid(self) -> str:

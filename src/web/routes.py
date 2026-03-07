@@ -1,6 +1,7 @@
 """API endpoints for the web interface."""
 
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -19,6 +20,26 @@ from ..services.operator_service import OperatorService
 from .identifiers import parse_operator_identifier
 
 router = APIRouter()
+
+# Per-operator cooldown for expensive save/refresh operations (seconds)
+_REFRESH_COOLDOWN_SECONDS = 60
+_last_refresh_time: dict[int, float] = {}
+
+
+def _check_refresh_cooldown(operator_id: int) -> None:
+    """Raise 429 if this operator was refreshed within the cooldown window."""
+    last = _last_refresh_time.get(operator_id, 0.0)
+    remaining = _REFRESH_COOLDOWN_SECONDS - (time.monotonic() - last)
+    if remaining > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Operator {operator_id} was refreshed recently. Retry in {int(remaining) + 1}s.",
+        )
+
+
+def _record_refresh(operator_id: int) -> None:
+    """Record that operator_id was just refreshed."""
+    _last_refresh_time[operator_id] = time.monotonic()
 
 
 @router.get("/operator/{identifier}")
@@ -284,34 +305,11 @@ async def list_saved_operators():
         return {"operators": [], "error": str(e)}
 
 
-@router.post("/operator/{identifier}/save")
-async def save_operator_endpoint(identifier: str):
-    """Save an operator to the follow list.
+def _build_operator_data_dict(rewards) -> dict:
+    """Build the serializable data dict from an OperatorRewards object.
 
-    Fetches current operator data (including history and withdrawals) and stores it in the database.
+    Used by both save and refresh endpoints to ensure consistent output.
     """
-    logger.info(f"Saving operator: {identifier}")
-    service = OperatorService()
-
-    id_type, parsed_identifier = parse_operator_identifier(identifier)
-    if id_type == "id":
-        operator_id = parsed_identifier
-    else:
-        operator_id = await service.onchain.find_operator_by_address(parsed_identifier)
-        if operator_id is None:
-            raise HTTPException(status_code=404, detail="Operator not found")
-
-    # Fetch current operator data with history and withdrawals
-    rewards = await service.get_operator_by_id(
-        operator_id,
-        include_validators=True,
-        include_history=True,
-        include_withdrawals=True,
-    )
-    if rewards is None:
-        raise HTTPException(status_code=404, detail="Operator not found")
-
-    # Build the data dict (same format as get_operator endpoint)
     data = {
         "operator_id": rewards.node_operator_id,
         "manager_address": rewards.manager_address,
@@ -361,7 +359,6 @@ async def save_operator_endpoint(identifier: str):
             "lifetime_bond_apy": rewards.apy.lifetime_bond_apy,
             "lifetime_net_apy": rewards.apy.lifetime_net_apy,
         }
-        # Include distribution history frames
         if rewards.apy.frames:
             data["apy"]["frames"] = [
                 {
@@ -378,7 +375,6 @@ async def save_operator_endpoint(identifier: str):
                 }
                 for f in rewards.apy.frames
             ]
-        # Include capital efficiency if available
         if rewards.apy.capital_efficiency:
             ce = rewards.apy.capital_efficiency
             data["apy"]["capital_efficiency"] = {
@@ -410,7 +406,6 @@ async def save_operator_endpoint(identifier: str):
             "has_issues": rewards.health.has_issues,
         }
 
-    # Include withdrawal history
     if rewards.withdrawals:
         data["withdrawals"] = [
             {
@@ -429,10 +424,45 @@ async def save_operator_endpoint(identifier: str):
             for w in rewards.withdrawals
         ]
 
+    return data
+
+
+@router.post("/operator/{identifier}/save")
+async def save_operator_endpoint(identifier: str):
+    """Save an operator to the follow list.
+
+    Fetches current operator data (including history and withdrawals) and stores it in the database.
+    """
+    logger.info(f"Saving operator: {identifier}")
+    service = OperatorService()
+
+    id_type, parsed_identifier = parse_operator_identifier(identifier)
+    if id_type == "id":
+        operator_id = parsed_identifier
+    else:
+        operator_id = await service.onchain.find_operator_by_address(parsed_identifier)
+        if operator_id is None:
+            raise HTTPException(status_code=404, detail="Operator not found")
+
+    _check_refresh_cooldown(operator_id)
+
+    # Fetch current operator data with history and withdrawals
+    rewards = await service.get_operator_by_id(
+        operator_id,
+        include_validators=True,
+        include_history=True,
+        include_withdrawals=True,
+    )
+    if rewards is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+
+    data = _build_operator_data_dict(rewards)
+
     # Save to database
     frames_count = len(data.get("apy", {}).get("frames", []))
     withdrawals_count = len(data.get("withdrawals", []))
     logger.info(f"Saving operator {operator_id}: {frames_count} frames, {withdrawals_count} withdrawals")
+    _record_refresh(operator_id)
     await save_operator(operator_id, data)
 
     return {"status": "saved", "operator_id": operator_id}
@@ -494,6 +524,8 @@ async def refresh_operator_endpoint(identifier: str):
     if not await is_operator_saved(operator_id):
         raise HTTPException(status_code=404, detail="Operator not in saved list")
 
+    _check_refresh_cooldown(operator_id)
+
     # Fetch fresh data with history and withdrawals
     rewards = await service.get_operator_by_id(
         operator_id,
@@ -504,128 +536,13 @@ async def refresh_operator_endpoint(identifier: str):
     if rewards is None:
         raise HTTPException(status_code=404, detail="Operator not found")
 
-    # Build the data dict
-    data = {
-        "operator_id": rewards.node_operator_id,
-        "manager_address": rewards.manager_address,
-        "reward_address": rewards.reward_address,
-        "curve_id": rewards.curve_id,
-        "operator_type": rewards.operator_type,
-        "rewards": {
-            "current_bond_eth": str(rewards.current_bond_eth),
-            "required_bond_eth": str(rewards.required_bond_eth),
-            "excess_bond_eth": str(rewards.excess_bond_eth),
-            "cumulative_rewards_shares": rewards.cumulative_rewards_shares,
-            "cumulative_rewards_eth": str(rewards.cumulative_rewards_eth),
-            "distributed_shares": rewards.distributed_shares,
-            "distributed_eth": str(rewards.distributed_eth),
-            "unclaimed_shares": rewards.unclaimed_shares,
-            "unclaimed_eth": str(rewards.unclaimed_eth),
-            "total_claimable_eth": str(rewards.total_claimable_eth),
-        },
-        "validators": {
-            "total": rewards.total_validators,
-            "active": rewards.active_validators,
-            "exited": rewards.exited_validators,
-        },
-    }
-
-    if rewards.validators_by_status:
-        data["validators"]["by_status"] = rewards.validators_by_status
-
-    if rewards.avg_effectiveness is not None:
-        data["performance"] = {
-            "avg_effectiveness": round(rewards.avg_effectiveness, 2),
-        }
-
-    if rewards.active_since:
-        data["active_since"] = rewards.active_since.isoformat()
-
-    if rewards.apy:
-        data["apy"] = {
-            "historical_reward_apy_28d": rewards.apy.historical_reward_apy_28d,
-            "historical_reward_apy_ltd": rewards.apy.historical_reward_apy_ltd,
-            "bond_apy": rewards.apy.bond_apy,
-            "net_apy_28d": rewards.apy.net_apy_28d,
-            "net_apy_ltd": rewards.apy.net_apy_ltd,
-            "next_distribution_date": rewards.apy.next_distribution_date,
-            "next_distribution_est_eth": rewards.apy.next_distribution_est_eth,
-            "lifetime_reward_apy": rewards.apy.lifetime_reward_apy,
-            "lifetime_bond_apy": rewards.apy.lifetime_bond_apy,
-            "lifetime_net_apy": rewards.apy.lifetime_net_apy,
-        }
-        # Include distribution history frames
-        if rewards.apy.frames:
-            data["apy"]["frames"] = [
-                {
-                    "frame_number": f.frame_number,
-                    "start_date": f.start_date,
-                    "end_date": f.end_date,
-                    "rewards_eth": f.rewards_eth,
-                    "rewards_shares": f.rewards_shares,
-                    "duration_days": f.duration_days,
-                    "validator_count": f.validator_count,
-                    "apy": f.apy,
-                    "bond_apy": f.bond_apy,
-                    "net_apy": f.net_apy,
-                }
-                for f in rewards.apy.frames
-            ]
-        # Include capital efficiency if available
-        if rewards.apy.capital_efficiency:
-            ce = rewards.apy.capital_efficiency
-            data["apy"]["capital_efficiency"] = {
-                "total_csm_return_eth": ce.total_csm_return_eth,
-                "total_capital_deployed_eth": ce.total_capital_deployed_eth,
-                "csm_annualized_return_pct": ce.csm_annualized_return_pct,
-                "steth_benchmark_return_pct": ce.steth_benchmark_return_pct,
-                "csm_advantage_ratio": ce.csm_advantage_ratio,
-                "first_deposit_date": ce.first_deposit_date,
-                "days_operating": ce.days_operating,
-                "xirr_pct": ce.xirr_pct,
-            }
-
-    if rewards.health:
-        data["health"] = {
-            "bond_healthy": rewards.health.bond_healthy,
-            "bond_deficit_eth": str(rewards.health.bond_deficit_eth),
-            "stuck_validators_count": rewards.health.stuck_validators_count,
-            "slashed_validators_count": rewards.health.slashed_validators_count,
-            "validators_at_risk_count": rewards.health.validators_at_risk_count,
-            "strikes": {
-                "total_validators_with_strikes": rewards.health.strikes.total_validators_with_strikes,
-                "validators_at_risk": rewards.health.strikes.validators_at_risk,
-                "validators_near_ejection": rewards.health.strikes.validators_near_ejection,
-                "total_strikes": rewards.health.strikes.total_strikes,
-                "max_strikes": rewards.health.strikes.max_strikes,
-                "strike_threshold": rewards.health.strikes.strike_threshold,
-            },
-            "has_issues": rewards.health.has_issues,
-        }
-
-    # Include withdrawal history
-    if rewards.withdrawals:
-        data["withdrawals"] = [
-            {
-                "block_number": w.block_number,
-                "timestamp": w.timestamp,
-                "shares": w.shares,
-                "eth_value": w.eth_value,
-                "tx_hash": w.tx_hash,
-                "withdrawal_type": w.withdrawal_type,
-                "request_id": w.request_id,
-                "status": w.status,
-                "claimed_eth": w.claimed_eth,
-                "claim_tx_hash": w.claim_tx_hash,
-                "claim_timestamp": w.claim_timestamp,
-            }
-            for w in rewards.withdrawals
-        ]
+    data = _build_operator_data_dict(rewards)
 
     # Update in database
     frames_count = len(data.get("apy", {}).get("frames", []))
     withdrawals_count = len(data.get("withdrawals", []))
     logger.info(f"Refreshing operator {operator_id}: {frames_count} frames, {withdrawals_count} withdrawals")
+    _record_refresh(operator_id)
     await update_operator_data(operator_id, data)
 
     return {"status": "refreshed", "operator_id": operator_id, "data": data}

@@ -68,6 +68,8 @@ class WithdrawalEvent(BaseModel):
 
     block_number: int
     timestamp: str  # ISO format
+    # For stETH type: rebasing token amount in wei (stETH balance, ~1:1 with ETH).
+    # For unstETH type: actual stETH shares in wei (different unit — use eth_value for display).
     shares: int
     eth_value: float
     tx_hash: str

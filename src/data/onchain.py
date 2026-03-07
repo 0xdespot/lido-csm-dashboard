@@ -910,14 +910,18 @@ class OnChainDataProvider:
                     block["timestamp"], tz=timezone.utc
                 ).isoformat()
 
-                # stETH Transfer 'value' is already ETH-denominated (rebased token amount)
-                eth_value = Decimal(event["value"]) / Decimal(10**18)
+                # stETH Transfer 'value' is the rebasing token amount in wei (1:1 with ETH).
+                # Stored as 'shares' to satisfy the WithdrawalEvent schema, but NOTE: this is
+                # NOT stETH shares — it is the stETH balance amount (token units, 18 decimals).
+                # For unstETH events, 'shares' really are stETH shares (different unit).
+                steth_amount = event["value"]
+                eth_value = Decimal(steth_amount) / Decimal(10**18)
 
                 enriched.append(
                     {
                         "block_number": event["block"],
                         "timestamp": timestamp,
-                        "shares": event["value"],
+                        "shares": steth_amount,  # stETH token amount in wei (not stETH shares)
                         "eth_value": float(eth_value),
                         "tx_hash": event["tx_hash"],
                     }

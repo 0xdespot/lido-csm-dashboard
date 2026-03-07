@@ -1,8 +1,9 @@
 """SQLite database for persisting saved operators."""
 
+import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -12,6 +13,7 @@ from ..core.config import get_settings
 logger = logging.getLogger(__name__)
 
 _db_initialized = False
+_db_init_lock = asyncio.Lock()
 
 # Database connection timeout in seconds (prevents hanging on locks)
 DB_TIMEOUT = 5.0
@@ -33,24 +35,29 @@ async def init_db() -> None:
         logger.debug("Database already initialized")
         return
 
-    logger.info("Initializing database schema")
-    db_path = await get_db_path()
-    async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
-        # Enable WAL mode for better concurrent access
-        await db.execute("PRAGMA journal_mode=WAL")
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS saved_operators (
-                operator_id INTEGER PRIMARY KEY,
-                manager_address TEXT NOT NULL,
-                reward_address TEXT NOT NULL,
-                data_json TEXT NOT NULL,
-                saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.commit()
-    _db_initialized = True
-    logger.info("Database initialized successfully")
+    async with _db_init_lock:
+        # Re-check after acquiring lock — another coroutine may have finished first
+        if _db_initialized:
+            return
+
+        logger.info("Initializing database schema")
+        db_path = await get_db_path()
+        async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
+            # Enable WAL mode for better concurrent access
+            await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS saved_operators (
+                    operator_id INTEGER PRIMARY KEY,
+                    manager_address TEXT NOT NULL,
+                    reward_address TEXT NOT NULL,
+                    data_json TEXT NOT NULL,
+                    saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await db.commit()
+        _db_initialized = True
+        logger.info("Database initialized successfully")
 
 
 async def save_operator(operator_id: int, data: dict) -> None:
@@ -66,7 +73,7 @@ async def save_operator(operator_id: int, data: dict) -> None:
     manager_address = data.get("manager_address", "")
     reward_address = data.get("reward_address", "")
     data_json = json.dumps(data)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
         await db.execute("""
@@ -177,7 +184,7 @@ async def update_operator_data(operator_id: int, data: dict) -> bool:
     manager_address = data.get("manager_address", "")
     reward_address = data.get("reward_address", "")
     data_json = json.dumps(data)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     async with aiosqlite.connect(db_path, timeout=DB_TIMEOUT) as db:
         cursor = await db.execute("""
