@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0] - 2026-03-07
+
+### Added
+- **Capital efficiency tracking** — New dashboard section showing CSM XIRR (cash-flow IRR accounting for exact timing of deposits, claims, and distributions), annualized simple return, stETH holding benchmark, and CSM advantage ratio
+- **Saved operator database** — SQLite-backed persistence for followed operators with full history and withdrawal data cached locally
+- **Version single source of truth** — Version string now sourced from package metadata (`importlib.metadata`), eliminating duplication
+
+### Fixed
+- **XIRR calculation** — Corrected cash-flow model to include bond claims, split claimed/unclaimed rewards correctly, and use proper terminal value
+- **Cache `None` bug** — `@cached` decorator now correctly caches `None` return values (previously re-called the function on every request for failed/not-found lookups)
+- **DB init race condition** — `init_db()` now uses `asyncio.Lock` with double-checked locking to prevent concurrent initialization errors under parallel startup requests
+- **IPFS rate limiter** — Lock is now released before sleeping, allowing concurrent coroutines to schedule their time slots in parallel instead of serializing behind a 1-second sleep
+
+### Changed
+- **Rate limiting on save/refresh** — `POST /operator/{id}/save` and `POST /operator/{id}/refresh` now enforce a 60-second per-operator cooldown to prevent hammering external APIs
+- **Timestamps** — Database timestamps now use timezone-aware `datetime.now(timezone.utc)` (replaces deprecated `datetime.utcnow()`)
+- **Code deduplication** — Extracted `_build_operator_data_dict()` helper in routes, eliminating ~110 lines of duplicated serialization logic between save and refresh endpoints
+
 ## [0.4.3] - 2026-02-20
 
 ### Changed

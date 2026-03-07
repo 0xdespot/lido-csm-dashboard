@@ -55,5 +55,86 @@
     "outputs": [
       {"name": "", "type": "uint256"}
     ]
+  },
+  {
+    "name": "BondDepositedETH",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256", "indexed": true},
+      {"name": "from", "type": "address", "indexed": false},
+      {"name": "amount", "type": "uint256", "indexed": false}
+    ]
+  },
+  {
+    "name": "BondDepositedStETH",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256", "indexed": true},
+      {"name": "from", "type": "address", "indexed": false},
+      {"name": "amount", "type": "uint256", "indexed": false}
+    ]
+  },
+  {
+    "name": "BondDepositedWstETH",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256", "indexed": true},
+      {"name": "from", "type": "address", "indexed": false},
+      {"name": "amount", "type": "uint256", "indexed": false}
+    ]
+  },
+  {
+    "name": "BondClaimedStETH",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256", "indexed": true},
+      {"name": "to", "type": "address", "indexed": false},
+      {"name": "amount", "type": "uint256", "indexed": false}
+    ]
+  },
+  {
+    "name": "BondClaimedUnstETH",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256", "indexed": true},
+      {"name": "to", "type": "address", "indexed": false},
+      {"name": "amount", "type": "uint256", "indexed": false},
+      {"name": "requestId", "type": "uint256", "indexed": false}
+    ]
+  },
+  {
+    "name": "BondClaimedWstETH",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256", "indexed": true},
+      {"name": "to", "type": "address", "indexed": false},
+      {"name": "amount", "type": "uint256", "indexed": false}
+    ]
+  },
+  {
+    "name": "BondBurned",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256", "indexed": true},
+      {"name": "toBurnAmount", "type": "uint256", "indexed": false},
+      {"name": "burnedAmount", "type": "uint256", "indexed": false}
+    ]
+  },
+  {
+    "name": "BondCharged",
+    "type": "event",
+    "anonymous": false,
+    "inputs": [
+      {"name": "nodeOperatorId", "type": "uint256", "indexed": true},
+      {"name": "toChargeAmount", "type": "uint256", "indexed": false},
+      {"name": "chargedAmount", "type": "uint256", "indexed": false}
+    ]
   }
 ]

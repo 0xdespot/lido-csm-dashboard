@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 # Default maximum cache entries to prevent unbounded memory growth
 DEFAULT_MAX_SIZE = 1000
 
+# Sentinel distinguishing "not in cache" from "cached value is None"
+_MISSING = object()
+
 
 class SimpleCache:
     """
@@ -28,8 +31,8 @@ class SimpleCache:
         self._default_ttl = default_ttl or get_settings().cache_ttl_seconds
         self._max_size = max_size
 
-    def get(self, key: str) -> Any | None:
-        """Get value from cache if not expired. Moves accessed key to end (LRU)."""
+    def get(self, key: str) -> Any:
+        """Get value from cache if not expired. Returns _MISSING if not found or expired."""
         if key in self._cache:
             value, expiry = self._cache[key]
             if datetime.now() < expiry:
@@ -38,7 +41,7 @@ class SimpleCache:
                 return value
             # Expired - remove it
             del self._cache[key]
-        return None
+        return _MISSING
 
     def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         """Set value in cache with TTL. Evicts LRU entries if at max size."""
@@ -95,7 +98,7 @@ def cached(ttl: int | None = None) -> Callable:
             cache_key = hashlib.md5(key_data.encode()).hexdigest()
 
             cached_result = _cache.get(cache_key)
-            if cached_result is not None:
+            if cached_result is not _MISSING:
                 return cached_result
 
             result = await func(*args, **kwargs)

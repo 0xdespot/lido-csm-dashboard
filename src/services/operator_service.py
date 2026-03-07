@@ -9,12 +9,14 @@ logger = logging.getLogger(__name__)
 from ..core.types import (
     APYMetrics,
     BondSummary,
+    CapitalEfficiency,
     DistributionFrame,
     HealthStatus,
     OperatorRewards,
     StrikeSummary,
     WithdrawalEvent,
 )
+from .capital_efficiency import calculate_capital_efficiency
 from ..data.beacon import (
     BeaconDataProvider,
     ValidatorInfo,
@@ -30,6 +32,27 @@ from ..data.lido_api import LidoAPIProvider
 from ..data.onchain import OnChainDataProvider
 from ..data.rewards_tree import RewardsTreeProvider
 from ..data.strikes import StrikesProvider
+
+
+def allocate_claimed_shares_to_frames(
+    frame_shares: list[int],
+    distributed_shares: int,
+) -> list[int]:
+    """Allocate claimed shares to frames in chronological order.
+
+    We treat unclaimed rewards as coming from the most recent frames, so claimed
+    shares are applied oldest-first.
+    """
+    remaining = max(0, distributed_shares)
+    allocated: list[int] = []
+
+    for shares in frame_shares:
+        frame_total = max(0, shares)
+        claimed_for_frame = min(frame_total, remaining)
+        allocated.append(claimed_for_frame)
+        remaining -= claimed_for_frame
+
+    return allocated
 
 
 class OperatorService:
@@ -123,6 +146,8 @@ class OperatorService:
                 bond_eth=bond.current_bond_eth,
                 curve_id=curve_id,
                 include_history=include_history,
+                distributed_shares=distributed,
+                unclaimed_shares=unclaimed_shares,
             )
 
             # Step 11: Calculate health status
@@ -176,6 +201,8 @@ class OperatorService:
         bond_eth: Decimal,
         curve_id: int = 0,
         include_history: bool = False,
+        distributed_shares: int = 0,
+        unclaimed_shares: int = 0,
     ) -> APYMetrics:
         """Calculate APY metrics for an operator using historical IPFS data.
 
@@ -265,21 +292,21 @@ class OperatorService:
                         # - We keep lifetime_distribution_eth (ETH totals are accurate)
                         # historical_reward_apy_ltd remains None
 
-                        # Estimate next distribution date (~28 days after current frame ends)
-                        # Frame duration ≈ 28 days = ~6300 epochs
+                        # Estimate next distribution date using actual frame epoch span
                         # If IPFS logs are behind, keep advancing until we get a future date
                         now = datetime.now(timezone.utc)
-                        next_epoch = current_frame.end_epoch + 6300
+                        frame_epoch_duration = current_frame.end_epoch - current_frame.start_epoch
+                        next_epoch = current_frame.end_epoch + frame_epoch_duration
                         next_dt = epoch_to_dt(next_epoch)
                         while next_dt < now:
-                            next_epoch += 6300  # Add another ~28 days
+                            next_epoch += frame_epoch_duration
                             next_dt = epoch_to_dt(next_epoch)
                         next_distribution_date = next_dt.isoformat()
 
                         # Estimate next distribution ETH based on current daily rate
                         if current_days > 0:
                             daily_rate = current_eth / Decimal(current_days)
-                            next_distribution_est_eth = float(daily_rate * Decimal(28))
+                            next_distribution_est_eth = float(daily_rate * Decimal(current_days))
 
             except Exception as e:
                 # If historical APY calculation fails, continue without it
@@ -489,6 +516,51 @@ class OperatorService:
                 (lifetime_distribution_eth or 0) + (lifetime_bond_eth or 0), 6
             )
 
+        # 6. Capital efficiency (only when include_history=True and frames exist)
+        capital_efficiency = None
+        if include_history and frames and lifetime_distribution_eth is not None:
+            try:
+                bond_events = await self.onchain.get_bond_event_history(operator_id)
+                if bond_events:
+                    # Only claimed rewards are past cash flows (at frame dates).
+                    # Allocate claims oldest-first so unclaimed rewards remain in terminal value.
+                    claimed_shares_by_frame = allocate_claimed_shares_to_frames(
+                        [f.distributed_rewards for f in frames],
+                        distributed_shares,
+                    )
+
+                    distribution_flows = []
+                    for f, claimed_shares in zip(frames, claimed_shares_by_frame):
+                        if claimed_shares <= 0:
+                            continue
+                        f_eth_val = await self.onchain.shares_to_eth(claimed_shares)
+                        flow_date = epoch_to_dt(f.end_epoch)
+                        distribution_flows.append({
+                            "date": flow_date,
+                            "amount_eth": float(f_eth_val),
+                        })
+
+                    # Terminal value = current bond + unclaimed rewards
+                    unclaimed_reward_eth = float(
+                        await self.onchain.shares_to_eth(unclaimed_shares)
+                    )
+                    terminal_value = float(bond_eth) + unclaimed_reward_eth
+
+                    ce_result = calculate_capital_efficiency(
+                        bond_events=bond_events,
+                        total_rewards_eth=lifetime_distribution_eth,
+                        current_bond_eth=float(bond_eth),
+                        steth_apr=bond_apy,
+                        historical_apr_data=historical_apr_data,
+                        distribution_flows=distribution_flows,
+                        get_average_apr_for_range=self.lido_api.get_average_apr_for_range,
+                        xirr_terminal_value=terminal_value,
+                    )
+                    if ce_result:
+                        capital_efficiency = CapitalEfficiency(**ce_result)
+            except Exception as e:
+                logger.warning(f"Capital efficiency calculation failed for operator {operator_id}: {e}")
+
         return APYMetrics(
             previous_distribution_eth=previous_distribution_eth,
             previous_distribution_apy=previous_distribution_apy,
@@ -516,6 +588,7 @@ class OperatorService:
             previous_net_total_eth=previous_net_total_eth,
             current_net_total_eth=current_net_total_eth,
             lifetime_net_total_eth=lifetime_net_total_eth,
+            capital_efficiency=capital_efficiency,
         )
 
     async def calculate_health_status(

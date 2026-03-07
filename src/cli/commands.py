@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ..core.types import OperatorRewards
+from ..core.version import __version__
 from ..services.operator_service import OperatorService
 
 app = typer.Typer(
@@ -28,6 +29,7 @@ def run_async(coro):
 def format_as_api_json(rewards: OperatorRewards, include_validators: bool = False, include_withdrawals: bool = False) -> dict:
     """Format rewards data in the same structure as the API endpoint."""
     result = {
+        "version": __version__,
         "operator_id": rewards.node_operator_id,
         "manager_address": rewards.manager_address,
         "reward_address": rewards.reward_address,
@@ -115,6 +117,19 @@ def format_as_api_json(rewards: OperatorRewards, include_validators: bool = Fals
                 }
                 for f in rewards.apy.frames
             ]
+        # Add capital efficiency if available
+        if rewards.apy.capital_efficiency:
+            ce = rewards.apy.capital_efficiency
+            result["apy"]["capital_efficiency"] = {
+                "total_csm_return_eth": ce.total_csm_return_eth,
+                "total_capital_deployed_eth": ce.total_capital_deployed_eth,
+                "csm_annualized_return_pct": ce.csm_annualized_return_pct,
+                "steth_benchmark_return_pct": ce.steth_benchmark_return_pct,
+                "csm_advantage_ratio": ce.csm_advantage_ratio,
+                "first_deposit_date": ce.first_deposit_date,
+                "days_operating": ce.days_operating,
+                "xirr_pct": ce.xirr_pct,
+            }
 
     # Add active_since if available
     if rewards.active_since:
@@ -243,6 +258,8 @@ def rewards(
             f"Manager: {rewards.manager_address}\n"
             f"Rewards: {rewards.reward_address}",
             title="Operator Info",
+            subtitle=f"[dim]v{__version__}[/dim]",
+            subtitle_align="right",
         )
     )
 
@@ -545,6 +562,31 @@ def rewards(
             except (ValueError, TypeError):
                 pass
         console.print()
+
+        # Show Capital Efficiency table if available (with --history flag)
+        if history and rewards.apy.capital_efficiency:
+            ce = rewards.apy.capital_efficiency
+            ce_table = Table(title="Capital Efficiency")
+            ce_table.add_column("Metric", style="cyan")
+            ce_table.add_column("Value", style="green", justify="right")
+
+            if ce.csm_annualized_return_pct is not None:
+                ce_table.add_row("CSM Annualized", f"{ce.csm_annualized_return_pct:.2f}%")
+            if ce.steth_benchmark_return_pct is not None:
+                ce_table.add_row("stETH Holding", f"{ce.steth_benchmark_return_pct:.2f}%")
+            if ce.csm_advantage_ratio is not None:
+                adv_style = "green" if ce.csm_advantage_ratio >= 1.0 else "red"
+                ce_table.add_row(
+                    "CSM Advantage",
+                    f"[{adv_style}]{ce.csm_advantage_ratio:.2f}x[/{adv_style}]",
+                )
+            if ce.xirr_pct is not None:
+                ce_table.add_row("XIRR", f"{ce.xirr_pct:.2f}%")
+            if ce.days_operating is not None:
+                ce_table.add_row("Operating Period", f"{int(ce.days_operating)} days")
+
+            console.print(ce_table)
+            console.print()
 
         # Show full distribution history if --history flag is used
         if history and rewards.apy.frames:
