@@ -36,7 +36,7 @@ class EtherscanProvider:
             return []
 
         # Event topic: keccak256("DistributionLogUpdated(string)")
-        topic0 = "0x" + Web3.keccak(text="DistributionLogUpdated(string)").hex()
+        topic0 = Web3.keccak(text="DistributionLogUpdated(string)").hex()
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
@@ -60,6 +60,9 @@ class EtherscanProvider:
                 return []
 
             if data.get("status") != "1":
+                msg = data.get("message", "")
+                result = data.get("result", "")
+                logger.warning(f"Etherscan API error (distribution logs): {msg} - {result}")
                 return []
 
             results = []
@@ -101,7 +104,7 @@ class EtherscanProvider:
             return []
 
         # Event topic: keccak256("Transfer(address,address,uint256)")
-        topic0 = "0x" + Web3.keccak(text="Transfer(address,address,uint256)").hex()
+        topic0 = Web3.keccak(text="Transfer(address,address,uint256)").hex()
         # topic1 is indexed 'from' address (padded to 32 bytes)
         topic1 = "0x" + from_address.lower().replace("0x", "").zfill(64)
         # topic2 is indexed 'to' address (padded to 32 bytes)
@@ -133,6 +136,9 @@ class EtherscanProvider:
                 return []
 
             if data.get("status") != "1":
+                msg = data.get("message", "")
+                result = data.get("result", "")
+                logger.warning(f"Etherscan API error (transfer events): {msg} - {result}")
                 return []
 
             results = []
@@ -178,12 +184,9 @@ class EtherscanProvider:
 
         # Event: WithdrawalRequested(uint256 indexed requestId, address indexed requestor,
         #                            address indexed owner, uint256 amountOfStETH, uint256 amountOfShares)
-        topic0 = (
-            "0x"
-            + Web3.keccak(
-                text="WithdrawalRequested(uint256,address,address,uint256,uint256)"
-            ).hex()
-        )
+        topic0 = Web3.keccak(
+            text="WithdrawalRequested(uint256,address,address,uint256,uint256)"
+        ).hex()
         # topic1 is indexed requestId - not filtering on this
         # topic2 is indexed 'requestor' address (padded to 32 bytes)
         topic2 = "0x" + requestor.lower().replace("0x", "").zfill(64)
@@ -216,6 +219,9 @@ class EtherscanProvider:
                 return []
 
             if data.get("status") != "1":
+                msg = data.get("message", "")
+                result = data.get("result", "")
+                logger.warning(f"Etherscan API error (withdrawal requested): {msg} - {result}")
                 return []
 
             results = []
@@ -266,12 +272,9 @@ class EtherscanProvider:
 
         # Event: WithdrawalClaimed(uint256 indexed requestId, address indexed owner,
         #                          address indexed receiver, uint256 amountOfETH)
-        topic0 = (
-            "0x"
-            + Web3.keccak(
-                text="WithdrawalClaimed(uint256,address,address,uint256)"
-            ).hex()
-        )
+        topic0 = Web3.keccak(
+            text="WithdrawalClaimed(uint256,address,address,uint256)"
+        ).hex()
         # topic3 is indexed 'receiver' address (padded to 32 bytes)
         topic3 = "0x" + receiver.lower().replace("0x", "").zfill(64)
 
@@ -299,6 +302,9 @@ class EtherscanProvider:
                 return []
 
             if data.get("status") != "1":
+                msg = data.get("message", "")
+                result = data.get("result", "")
+                logger.warning(f"Etherscan API error (withdrawal claimed): {msg} - {result}")
                 return []
 
             results = []

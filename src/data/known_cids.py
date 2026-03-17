@@ -7,7 +7,7 @@ To update this list:
 1. Query events from Etherscan or a full node
 2. Add new entries in chronological order (oldest first)
 
-Last updated: February 2026
+Last updated: March 2026
 """
 
 # Format: {"block": block_number, "logCid": "Qm..."}
@@ -30,4 +30,5 @@ KNOWN_DISTRIBUTION_LOGS: list[dict] = [
     {"block": 24048776, "logCid": "QmdjvGW2yT8dgvK88sDaA9KFpmxTBxayLP6R1wm5mmzCnP"},
     {"block": 24247804, "logCid": "QmaaokMVEPoEPcoMzVN5EtMuauTLfLnGZAkwma7nkpRCK4"},
     {"block": 24448358, "logCid": "QmTw2c1STRAZvqTV6jrqRGV6qS5GvXETcVPyMkcvgj3Fg5"},
+    {"block": 24670543, "logCid": "QmQtLXNxRzZZfNXeWB2vUqVzfPEQiBSj65AgJ2VaFqYW9P"},
 ]
