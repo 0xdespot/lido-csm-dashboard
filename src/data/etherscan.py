@@ -60,6 +60,9 @@ class EtherscanProvider:
                 return []
 
             if data.get("status") != "1":
+                msg = data.get("message", "")
+                result = data.get("result", "")
+                logger.warning(f"Etherscan API error (distribution logs): {msg} - {result}")
                 return []
 
             results = []
@@ -133,6 +136,9 @@ class EtherscanProvider:
                 return []
 
             if data.get("status") != "1":
+                msg = data.get("message", "")
+                result = data.get("result", "")
+                logger.warning(f"Etherscan API error (transfer events): {msg} - {result}")
                 return []
 
             results = []
@@ -216,6 +222,9 @@ class EtherscanProvider:
                 return []
 
             if data.get("status") != "1":
+                msg = data.get("message", "")
+                result = data.get("result", "")
+                logger.warning(f"Etherscan API error (withdrawal requested): {msg} - {result}")
                 return []
 
             results = []
@@ -299,6 +308,9 @@ class EtherscanProvider:
                 return []
 
             if data.get("status") != "1":
+                msg = data.get("message", "")
+                result = data.get("result", "")
+                logger.warning(f"Etherscan API error (withdrawal claimed): {msg} - {result}")
                 return []
 
             results = []
