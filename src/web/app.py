@@ -363,9 +363,9 @@ def create_app() -> FastAPI:
                 <h3 class="text-lg font-bold mb-4">Capital Efficiency</h3>
                 <div class="grid grid-cols-2 gap-4 mb-4">
                     <div class="bg-gray-700 rounded-lg p-4 text-center">
-                        <p class="text-gray-400 text-sm mb-1">CSM Return</p>
-                        <p id="ce-csm-return" class="text-2xl font-bold text-green-400">--%</p>
-                        <p class="text-gray-500 text-xs mt-1">Annualized (time-weighted)</p>
+                        <p class="text-gray-400 text-sm mb-1">CSM XIRR</p>
+                        <p id="ce-xirr" class="text-2xl font-bold text-green-400">--%</p>
+                        <p class="text-gray-500 text-xs mt-1">Cash-flow IRR (all deposits &amp; claims)</p>
                     </div>
                     <div class="bg-gray-700 rounded-lg p-4 text-center">
                         <p class="text-gray-400 text-sm mb-1">stETH Holding</p>
@@ -378,10 +378,10 @@ def create_app() -> FastAPI:
                     <span id="ce-advantage" class="text-lg font-bold">--</span>
                 </div>
                 <div class="flex justify-center gap-6 text-sm text-gray-400">
-                    <span>XIRR (cash-flow): <span id="ce-xirr" class="text-white">--</span></span>
+                    <span>Simple annualized: <span id="ce-csm-return" class="text-white">--</span></span>
                     <span>Operating: <span id="ce-days" class="text-white">--</span></span>
                 </div>
-                <p class="text-xs text-gray-500 mt-3 text-center">Annualized return is time-weighted; XIRR is cash-flow weighted (deposits, claims, and terminal value).</p>
+                <p class="text-xs text-gray-500 mt-3 text-center">XIRR accounts for exact timing of deposits, claims, and distributions. Simple annualized is time-weighted capital / total days.</p>
             </div>
 
             <!-- Distribution History Section -->
@@ -558,18 +558,18 @@ def create_app() -> FastAPI:
 
         function renderCapitalEfficiency(ce) {
             const ceSection = document.getElementById('capital-efficiency-section');
-            const csmReturnEl = document.getElementById('ce-csm-return');
+            const xirrEl = document.getElementById('ce-xirr');
             const stethReturnEl = document.getElementById('ce-steth-return');
             const advEl = document.getElementById('ce-advantage');
-            const xirrEl = document.getElementById('ce-xirr');
+            const csmReturnEl = document.getElementById('ce-csm-return');
             const daysEl = document.getElementById('ce-days');
 
             // Reset defaults first to avoid stale values when switching operators
-            csmReturnEl.textContent = '--%';
+            xirrEl.textContent = '--%';
             stethReturnEl.textContent = '--%';
             advEl.textContent = '--';
             advEl.className = 'text-lg font-bold text-gray-300';
-            xirrEl.textContent = '--';
+            csmReturnEl.textContent = '--';
             daysEl.textContent = '--';
 
             if (!ce) {
@@ -577,8 +577,8 @@ def create_app() -> FastAPI:
                 return;
             }
 
-            if (ce.csm_annualized_return_pct !== null && ce.csm_annualized_return_pct !== undefined) {
-                csmReturnEl.textContent = ce.csm_annualized_return_pct.toFixed(2) + '%';
+            if (ce.xirr_pct !== null && ce.xirr_pct !== undefined) {
+                xirrEl.textContent = ce.xirr_pct.toFixed(2) + '%';
             }
             if (ce.steth_benchmark_return_pct !== null && ce.steth_benchmark_return_pct !== undefined) {
                 stethReturnEl.textContent = ce.steth_benchmark_return_pct.toFixed(2) + '%';
@@ -589,8 +589,8 @@ def create_app() -> FastAPI:
                     ? 'text-lg font-bold text-green-400'
                     : 'text-lg font-bold text-red-400';
             }
-            if (ce.xirr_pct !== null && ce.xirr_pct !== undefined) {
-                xirrEl.textContent = ce.xirr_pct.toFixed(2) + '%';
+            if (ce.csm_annualized_return_pct !== null && ce.csm_annualized_return_pct !== undefined) {
+                csmReturnEl.textContent = ce.csm_annualized_return_pct.toFixed(2) + '%';
             }
             if (ce.days_operating !== null && ce.days_operating !== undefined) {
                 daysEl.textContent = Math.round(ce.days_operating) + ' days';
