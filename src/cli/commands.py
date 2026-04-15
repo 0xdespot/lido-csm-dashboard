@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 import time
 from typing import Optional
 
@@ -710,6 +711,13 @@ def rewards(
                 f"({ready_count} ready to claim) totaling ~{pending_total:.4f} stETH[/yellow]"
             )
             console.print()
+
+    # Show data quality warnings if any
+    if rewards.data_warnings:
+        err_console = Console(file=sys.stderr)
+        for warning in rewards.data_warnings:
+            err_console.print(f"[yellow]Warning: {warning}[/yellow]")
+        console.print()
 
 
 @app.command()

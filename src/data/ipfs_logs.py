@@ -189,7 +189,7 @@ class IPFSLogProvider:
         self,
         operator_id: int,
         log_cids: list[dict],  # List of {block, logCid} from events
-    ) -> list[FrameData]:
+    ) -> tuple[list[FrameData], int]:
         """
         Fetch all historical frame data for an operator.
 
@@ -198,9 +198,10 @@ class IPFSLogProvider:
             log_cids: List of {block, logCid} dicts from DistributionLogUpdated events
 
         Returns:
-            List of FrameData objects, sorted by epoch (oldest first)
+            Tuple of (list of FrameData sorted by epoch oldest first, count of failed CID fetches)
         """
         frames = []
+        failed_count = 0
 
         for entry in log_cids:
             cid = entry["logCid"]
@@ -208,6 +209,7 @@ class IPFSLogProvider:
 
             log_data = await self.fetch_log(cid)
             if log_data is None:
+                failed_count += 1
                 continue
 
             rewards = self.get_operator_frame_rewards(log_data, operator_id)
@@ -229,9 +231,15 @@ class IPFSLogProvider:
                 )
             )
 
+        if failed_count > 0:
+            logger.warning(
+                f"Failed to fetch {failed_count}/{len(log_cids)} "
+                f"distribution logs from IPFS"
+            )
+
         # Sort by epoch (oldest first)
         frames.sort(key=lambda f: f.start_epoch)
-        return frames
+        return frames, failed_count
 
     def calculate_frame_duration_days(self, frame: FrameData) -> float:
         """Calculate the duration of a frame in days."""

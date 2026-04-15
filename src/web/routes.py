@@ -235,6 +235,10 @@ async def get_operator(
             "has_issues": rewards.health.has_issues,
         }
 
+    # Add data quality warnings if any
+    if rewards.data_warnings:
+        result["data_warnings"] = rewards.data_warnings
+
     return result
 
 

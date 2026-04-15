@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0] - 2026-04-15
+
+### Fixed
+- **Etherscan API completely broken since v0.5.1** — `hexbytes` 1.3.1 changed `.hex()` to no longer include the `0x` prefix, causing all Etherscan event queries to return "Invalid topic0 length". Switched all 4 query methods to use `.to_0x_hex()` which is the stable API for prefixed hex output. This was the primary cause of missing distribution history.
+- **Distribution history gaps for recent months** — Restructured the distribution discovery pipeline to merge all available data sources (known CIDs, persistent cache, Etherscan, RPC, and on-chain contract state) instead of a fragile sequential fallback. The current distribution from the contract is now always included.
+- **RPC event scanning too fragile** — Increased chunk size from 10k to 50k blocks, added adaptive chunk sizing on failure, exponential backoff, and raised the abort threshold from 3 to 10 consecutive failures.
+- **Incomplete results cached too long** — Distribution history with incomplete data now caches for 5 minutes instead of 1 hour, allowing faster recovery.
+- **Silent data quality failures** — Added `data_warnings` field to API responses and yellow CLI warnings when distribution data may be incomplete (Etherscan unavailable, RPC scan aborted early, etc.)
+- **Warning snapshot bleeding across concerns** — Discovery warnings are now tracked locally and only discovery-related warnings are cached for re-emission.
+
+### Added
+- **Persistent CID discovery cache** — Discovered distribution CIDs are now saved to `~/.cache/csm-dashboard/discovered_cids.json` and reused across restarts, eliminating redundant scanning.
+- **IPFS fetch failure tracking** — `get_operator_history()` now reports how many IPFS log fetches failed, surfaced as a data warning when non-zero.
+- **Data warnings in API and CLI** — New `data_warnings` array in API responses and stderr warnings in CLI when data quality issues are detected.
+
 ## [0.5.0] - 2026-03-07
 
 ### Added

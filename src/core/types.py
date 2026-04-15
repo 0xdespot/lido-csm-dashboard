@@ -260,3 +260,6 @@ class OperatorRewards(BaseModel):
 
     # Withdrawal history (optional, populated with --history flag)
     withdrawals: list[WithdrawalEvent] | None = None
+
+    # Data quality warnings (populated when distribution data may be incomplete)
+    data_warnings: list[str] = []

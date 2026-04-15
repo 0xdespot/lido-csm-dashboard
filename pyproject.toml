@@ -2,7 +2,7 @@
 name = "csm-dashboard"
 
 
-version = "0.5.2"
+version = "0.6.0"
 
 description = "Lido CSM Operator Dashboard for tracking validator earnings"
 readme = "README.md"

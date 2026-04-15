@@ -163,6 +163,9 @@ class OperatorService:
         if include_withdrawals:
             withdrawals = await self.get_withdrawal_history(operator_id)
 
+        # Collect any data quality warnings from the on-chain provider
+        data_warnings = self.onchain.get_and_clear_warnings()
+
         return OperatorRewards(
             node_operator_id=operator_id,
             manager_address=operator.manager_address,
@@ -189,6 +192,7 @@ class OperatorService:
             active_since=active_since,
             health=health_status,
             withdrawals=withdrawals,
+            data_warnings=data_warnings,
         )
 
     async def get_all_operators_with_rewards(self) -> list[int]:
@@ -244,9 +248,15 @@ class OperatorService:
 
                 if log_history:
                     # Fetch operator's historical frame data
-                    frames = await self.ipfs_logs.get_operator_history(
+                    frames, ipfs_failures = await self.ipfs_logs.get_operator_history(
                         operator_id, log_history
                     )
+
+                    if ipfs_failures > 0:
+                        self.onchain._data_warnings.append(
+                            f"Failed to fetch {ipfs_failures}/{len(log_history)} "
+                            f"distribution logs from IPFS. Some frame data may be missing."
+                        )
 
                     if frames:
                         # Convert all frame shares to ETH values

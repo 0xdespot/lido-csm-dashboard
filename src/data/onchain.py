@@ -18,9 +18,13 @@ from ..core.contracts import (
     WITHDRAWAL_QUEUE_ABI,
 )
 from ..core.types import BondSummary, NodeOperator
-from .cache import cached
+from .cache import SimpleCache, cached
+from .discovered_cids import load_discovered_cids, merge_cid_sources, record_new_cids
 from .etherscan import EtherscanProvider
 from .known_cids import KNOWN_DISTRIBUTION_LOGS
+
+# Manual cache for distribution log history (adaptive TTL)
+_distribution_cache = SimpleCache()
 
 
 class OnChainDataProvider:
@@ -28,6 +32,7 @@ class OnChainDataProvider:
 
     def __init__(self, rpc_url: str | None = None):
         self.settings = get_settings()
+        self._data_warnings: list[str] = []
         self.w3 = Web3(
             Web3.HTTPProvider(
                 rpc_url or self.settings.eth_rpc_url,
@@ -286,24 +291,27 @@ class OnChainDataProvider:
 
         return keys
 
+    def get_and_clear_warnings(self) -> list[str]:
+        """Return accumulated data warnings and clear the list."""
+        warnings = self._data_warnings.copy()
+        self._data_warnings.clear()
+        return warnings
+
     async def get_current_log_cid(self) -> str:
         """Get the current distribution log CID from the contract."""
         return await asyncio.to_thread(
             self.csfeedistributor.functions.logCid().call
         )
 
-    @cached(ttl=3600)  # Cache for 1 hour since historical events don't change
     async def get_distribution_log_history(
         self, start_block: int | None = None
     ) -> list[dict]:
         """
         Query DistributionLogUpdated events to get historical logCids.
 
-        Tries multiple methods in order:
-        1. Etherscan API (if API key configured) - most reliable
-        2. Known CIDs + chunked RPC queries for newer events
-        3. Hardcoded known CIDs only - fallback for users without API keys
-        4. Current logCid from contract - ultimate fallback
+        Merges all available sources (known CIDs, runtime cache, Etherscan,
+        RPC scanning, and contract state) and always includes the current
+        distribution. Persists discoveries to a runtime cache on disk.
 
         Args:
             start_block: Starting block number (default: CSM deployment ~20873000)
@@ -311,11 +319,28 @@ class OnChainDataProvider:
         Returns:
             List of {block, logCid} dicts, sorted by block number (oldest first)
         """
+        # Check manual cache first
+        cache_key = "distribution_log_history"
+        from .cache import _MISSING
+
+        cached_result = _distribution_cache.get(cache_key)
+        if cached_result is not _MISSING:
+            cids, cached_warnings = cached_result
+            # Re-emit cached warnings so every caller sees them
+            self._data_warnings.extend(cached_warnings)
+            return cids
+
         # CSM was deployed around block 20873000 (Dec 2024)
         if start_block is None:
             start_block = 20873000
 
-        # 1. Try Etherscan API first (most reliable)
+        # 1. Start with all known sources merged
+        base_cids = merge_cid_sources(KNOWN_DISTRIBUTION_LOGS, load_discovered_cids())
+        result_complete = False
+        # Track warnings local to this discovery call (not IPFS/other concerns)
+        local_warnings: list[str] = []
+
+        # 2. Try Etherscan API (comprehensive, most reliable)
         etherscan = EtherscanProvider()
         if etherscan.is_available():
             events = await etherscan.get_distribution_log_events(
@@ -324,65 +349,96 @@ class OnChainDataProvider:
             )
             if events:
                 logger.info(f"Fetched {len(events)} distributions via Etherscan API")
-                return events
-
-        # 2. Use known CIDs as base + try RPC for newer events only
-        if KNOWN_DISTRIBUTION_LOGS:
-            last_known_block = KNOWN_DISTRIBUTION_LOGS[-1]["block"]
-            new_events = await self._query_events_chunked(last_known_block + 1)
-            if new_events:
-                # Merge known CIDs with newly discovered events
-                known_cids = {e["logCid"] for e in KNOWN_DISTRIBUTION_LOGS}
-                merged = list(KNOWN_DISTRIBUTION_LOGS)
-                for event in new_events:
-                    if event["logCid"] not in known_cids:
-                        merged.append(event)
-                logger.info(
-                    f"Using {len(KNOWN_DISTRIBUTION_LOGS)} known + "
-                    f"{len(merged) - len(KNOWN_DISTRIBUTION_LOGS)} new distributions via RPC"
-                )
-                return sorted(merged, key=lambda x: x["block"])
+                base_cids = merge_cid_sources(base_cids, events)
+                result_complete = True
             else:
-                logger.info(
-                    f"Using {len(KNOWN_DISTRIBUTION_LOGS)} known distributions "
-                    f"(set etherscan_api_key for latest data)"
+                local_warnings.append(
+                    "Etherscan API returned no results. "
+                    "Check your API key or try again later."
                 )
-                return KNOWN_DISTRIBUTION_LOGS
+        else:
+            logger.info(
+                "No Etherscan API key configured — using RPC + known CIDs fallback"
+            )
 
-        # 3. Try full chunked RPC queries (no known CIDs available)
-        events = await self._query_events_chunked(start_block)
-        if events:
-            logger.info(f"Fetched {len(events)} distributions via RPC event queries")
-            return events
+        # 3. RPC scan for events after the last known block
+        if not result_complete:
+            last_known_block = (
+                base_cids[-1]["block"] if base_cids else start_block
+            )
+            rpc_events = await self._query_events_chunked(last_known_block + 1)
+            if rpc_events:
+                base_cids = merge_cid_sources(base_cids, rpc_events)
 
-        # 4. Ultimate fallback: current logCid only
+        # 4. Always get current logCid from contract and merge it in
+        current_cid = None
+        current_block = None
         try:
             current_cid = await self.get_current_log_cid()
+            current_block = await asyncio.to_thread(
+                lambda: self.w3.eth.block_number
+            )
             if current_cid:
-                current_block = await asyncio.to_thread(
-                    lambda: self.w3.eth.block_number
-                )
-                return [{"block": current_block, "logCid": current_cid}]
+                existing_cids = {e["logCid"] for e in base_cids}
+                if current_cid not in existing_cids:
+                    base_cids.append(
+                        {"block": current_block, "logCid": current_cid}
+                    )
+                    base_cids.sort(key=lambda x: x["block"])
+                    logger.info(
+                        f"Added current distribution CID from contract "
+                        f"(not found via other methods)"
+                    )
         except Exception as e:
-            logger.debug(f"Failed to get current log CID as fallback: {e}")
+            logger.warning(f"Failed to get current log CID from contract: {e}")
 
-        return []
+        # 5. Persist any newly discovered CIDs to runtime cache
+        record_new_cids(base_cids)
+
+        # 6. Completeness check
+        if not result_complete and current_cid:
+            latest_cid = base_cids[-1]["logCid"] if base_cids else None
+            # We have the current CID (added in step 4), but may be missing
+            # intermediate ones between known_cids and the current CID
+            known_count = len(base_cids)
+            blocks_spanned = current_block - start_block if current_block else 0
+            expected_approx = max(1, blocks_spanned // 200000)
+            if known_count < expected_approx * 0.8:
+                local_warnings.append(
+                    f"Distribution history may be incomplete: found {known_count} "
+                    f"distributions, expected ~{expected_approx}. "
+                    f"Configure etherscan_api_key in .env for complete data."
+                )
+
+        # 7. Cache with adaptive TTL (store only discovery warnings for re-emission)
+        cache_ttl = 3600 if result_complete else 300
+        _distribution_cache.set(cache_key, (base_cids, local_warnings), cache_ttl)
+        self._data_warnings.extend(local_warnings)
+
+        logger.info(
+            f"Distribution history: {len(base_cids)} total distributions "
+            f"(complete={result_complete})"
+        )
+        return base_cids
 
     async def _query_events_chunked(
-        self, start_block: int, chunk_size: int = 10000
+        self, start_block: int, chunk_size: int = 50000
     ) -> list[dict]:
-        """Query events in smaller chunks to work around RPC limitations.
+        """Query events in chunks to work around RPC limitations.
 
-        Continues past failed chunks rather than aborting, but gives up
-        after too many consecutive failures.
+        Uses larger chunks (50k blocks) since DistributionLogUpdated events
+        are rare (~1 per 200k blocks). Includes exponential backoff and
+        adaptive chunk sizing on failure.
         """
         current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
         all_events = []
         consecutive_failures = 0
-        max_consecutive_failures = 3
+        max_consecutive_failures = 10
+        current_chunk_size = chunk_size
 
-        for from_block in range(start_block, current_block, chunk_size):
-            to_block = min(from_block + chunk_size - 1, current_block)
+        from_block = start_block
+        while from_block < current_block:
+            to_block = min(from_block + current_chunk_size - 1, current_block)
             try:
                 events = await asyncio.to_thread(
                     partial(
@@ -396,17 +452,43 @@ class OnChainDataProvider:
                         {"block": e["blockNumber"], "logCid": e["args"]["logCid"]}
                     )
                 consecutive_failures = 0
+                current_chunk_size = chunk_size  # Reset to full size on success
+                from_block = to_block + 1
             except Exception as e:
+                # Try halving chunk size before counting as a real failure
+                if current_chunk_size > 10000:
+                    current_chunk_size = current_chunk_size // 2
+                    logger.debug(
+                        f"RPC query failed for {from_block}-{to_block}, "
+                        f"reducing chunk size to {current_chunk_size}: {e}"
+                    )
+                    continue  # Retry same from_block with smaller chunk
+
+                # Chunk is at minimum size — this is a real failure
                 consecutive_failures += 1
                 logger.debug(
                     f"RPC event query failed for blocks {from_block}-{to_block}: {e}"
                 )
                 if consecutive_failures >= max_consecutive_failures:
-                    logger.debug(
+                    remaining = current_block - from_block
+                    self._data_warnings.append(
+                        f"RPC event scanning stopped early: {remaining:,} blocks "
+                        f"unscanned after {max_consecutive_failures} consecutive "
+                        f"failures. Some distributions may be missing."
+                    )
+                    logger.warning(
                         f"Giving up on RPC event queries after "
-                        f"{max_consecutive_failures} consecutive failures"
+                        f"{max_consecutive_failures} consecutive failures "
+                        f"({remaining:,} blocks remaining)"
                     )
                     break
+
+                # Exponential backoff, then advance past this chunk
+                backoff = min(2**consecutive_failures, 10)
+                logger.debug(f"Backing off {backoff}s before next RPC attempt")
+                await asyncio.sleep(backoff)
+                from_block = to_block + 1
+                current_chunk_size = chunk_size  # Reset chunk size for next range
 
         return sorted(all_events, key=lambda x: x["block"])
 
