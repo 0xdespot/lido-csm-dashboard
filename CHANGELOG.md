@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1] - 2026-05-21
+
+### Fixed
+- **False "distribution history incomplete" warning on RPC-only setups** — `get_distribution_log_history` only marked results complete when the Etherscan path succeeded, so a fully successful RPC fallback scan still emitted the *"may be incomplete… Configure etherscan_api_key"* warning and cached for only 5 minutes instead of 1 hour. `_query_events_chunked` now reports whether it scanned the full block range without hitting the consecutive-failure abort; a clean RPC scan is treated as complete. Genuinely failed scans still warn.
+
+### Added
+- **RPC endpoint startup log** — On first connection, the active RPC endpoint, chain ID, and head block are logged once per process (e.g. `RPC connected: http://localhost:8545 (chain_id=1, block=25,146,605)`), making it easy to confirm a self-hosted node is actually in use. A non-mainnet chain ID is flagged. Only the host is logged — API keys embedded in the RPC URL are never written to logs, including on connection failures. A connectivity check failure warns but is non-fatal.
+
 ## [0.6.0] - 2026-04-15
 
 ### Fixed

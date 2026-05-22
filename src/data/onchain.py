@@ -4,6 +4,7 @@ import asyncio
 import logging
 from decimal import Decimal
 from functools import partial
+from urllib.parse import urlparse
 
 from web3 import Web3
 
@@ -26,6 +27,40 @@ from .known_cids import KNOWN_DISTRIBUTION_LOGS
 # Manual cache for distribution log history (adaptive TTL)
 _distribution_cache = SimpleCache()
 
+# Guards the one-time RPC startup log so it runs once per process, not per
+# OnChainDataProvider instance (which is created per request).
+_rpc_startup_logged = False
+
+
+def _log_rpc_startup(w3: Web3, url: str) -> None:
+    """Log the active RPC endpoint and run a one-time connectivity check.
+
+    Runs once per process. The host only is logged (any API key embedded in
+    the URL path/query is not), and a failed check only warns — it is never
+    fatal.
+    """
+    global _rpc_startup_logged
+    if _rpc_startup_logged:
+        return
+    _rpc_startup_logged = True
+
+    parsed = urlparse(url)
+    safe = f"{parsed.scheme}://{parsed.hostname}"
+    if parsed.port:
+        safe += f":{parsed.port}"
+    try:
+        chain_id = w3.eth.chain_id
+        block = w3.eth.block_number
+        logger.info(f"RPC connected: {safe} (chain_id={chain_id}, block={block:,})")
+        if chain_id != 1:
+            logger.warning(f"RPC chain_id is {chain_id}, expected 1 (mainnet)")
+    except Exception as e:
+        # Log only the exception type — the message may embed the full RPC
+        # URL (including an API key in the path) which must not be logged.
+        logger.warning(
+            f"RPC connectivity check failed for {safe}: {type(e).__name__}"
+        )
+
 
 class OnChainDataProvider:
     """Fetches data from Ethereum contracts."""
@@ -33,12 +68,14 @@ class OnChainDataProvider:
     def __init__(self, rpc_url: str | None = None):
         self.settings = get_settings()
         self._data_warnings: list[str] = []
+        effective_rpc_url = rpc_url or self.settings.eth_rpc_url
         self.w3 = Web3(
             Web3.HTTPProvider(
-                rpc_url or self.settings.eth_rpc_url,
+                effective_rpc_url,
                 request_kwargs={"timeout": 30},
             )
         )
+        _log_rpc_startup(self.w3, effective_rpc_url)
 
         # Initialize contracts
         self.csmodule = self.w3.eth.contract(
@@ -366,9 +403,16 @@ class OnChainDataProvider:
             last_known_block = (
                 base_cids[-1]["block"] if base_cids else start_block
             )
-            rpc_events = await self._query_events_chunked(last_known_block + 1)
+            rpc_events, rpc_completed = await self._query_events_chunked(
+                last_known_block + 1
+            )
             if rpc_events:
                 base_cids = merge_cid_sources(base_cids, rpc_events)
+            # A clean scan (no failure abort) means the range after the last
+            # known CID is fully covered — the data is as complete as the
+            # known-CID list allows, so suppress the completeness warning.
+            if rpc_completed:
+                result_complete = True
 
         # 4. Always get current logCid from contract and merge it in
         current_cid = None
@@ -423,18 +467,23 @@ class OnChainDataProvider:
 
     async def _query_events_chunked(
         self, start_block: int, chunk_size: int = 50000
-    ) -> list[dict]:
+    ) -> tuple[list[dict], bool]:
         """Query events in chunks to work around RPC limitations.
 
         Uses larger chunks (50k blocks) since DistributionLogUpdated events
         are rare (~1 per 200k blocks). Includes exponential backoff and
         adaptive chunk sizing on failure.
+
+        Returns:
+            (events, completed) — `completed` is True when the full block
+            range was scanned without hitting the consecutive-failure abort.
         """
         current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
         all_events = []
         consecutive_failures = 0
         max_consecutive_failures = 10
         current_chunk_size = chunk_size
+        completed = True
 
         from_block = start_block
         while from_block < current_block:
@@ -481,6 +530,7 @@ class OnChainDataProvider:
                         f"{max_consecutive_failures} consecutive failures "
                         f"({remaining:,} blocks remaining)"
                     )
+                    completed = False
                     break
 
                 # Exponential backoff, then advance past this chunk
@@ -490,7 +540,7 @@ class OnChainDataProvider:
                 from_block = to_block + 1
                 current_chunk_size = chunk_size  # Reset chunk size for next range
 
-        return sorted(all_events, key=lambda x: x["block"])
+        return sorted(all_events, key=lambda x: x["block"]), completed
 
     @cached(ttl=3600)  # Cache for 1 hour
     async def get_withdrawal_history(
