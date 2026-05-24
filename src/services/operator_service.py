@@ -530,7 +530,22 @@ class OperatorService:
         capital_efficiency = None
         if include_history and frames and lifetime_distribution_eth is not None:
             try:
-                bond_events = await self.onchain.get_bond_event_history(operator_id)
+                # Bound the bond-event scan to the operator's known activity
+                # window. The earliest distribution frame's block is strictly
+                # after the operator's first deposit, so we back off by a
+                # 6-month safety margin (~1.3M blocks at 12s blocks) to catch
+                # the deposit. Falls back to CSM deployment if the math goes
+                # negative. This is a large performance win on first save
+                # (cuts the scan range from ~4M blocks to ~1-2M) and sidesteps
+                # the pruned-receipt range entirely on Nethermind-style nodes.
+                _CSM_DEPLOY_BLOCK = 20_873_000
+                _SAFETY_BLOCKS = 1_300_000  # ~6 months
+                hint_start = max(
+                    _CSM_DEPLOY_BLOCK, frames[0].block_number - _SAFETY_BLOCKS
+                )
+                bond_events = await self.onchain.get_bond_event_history(
+                    operator_id, start_block=hint_start
+                )
                 if bond_events:
                     # Only claimed rewards are past cash flows (at frame dates).
                     # Allocate claims oldest-first so unclaimed rewards remain in terminal value.

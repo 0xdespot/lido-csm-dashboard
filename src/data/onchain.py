@@ -19,7 +19,7 @@ from ..core.contracts import (
     WITHDRAWAL_QUEUE_ABI,
 )
 from ..core.types import BondSummary, NodeOperator
-from .cache import SimpleCache, cached
+from .cache import _MISSING, SimpleCache, cached, get_cache
 from .discovered_cids import load_discovered_cids, merge_cid_sources, record_new_cids
 from .etherscan import EtherscanProvider
 from .known_cids import KNOWN_DISTRIBUTION_LOGS
@@ -941,7 +941,90 @@ class OnChainDataProvider:
         "BondCharged": (-1, "charged"),
     }
 
-    @cached(ttl=3600)
+    async def _scan_one_bond_event(
+        self,
+        event_name: str,
+        flow_dir: int,
+        event_type_key: str,
+        operator_id: int,
+        start_block: int,
+        current_block: int,
+        chunk_size: int,
+    ) -> list[dict]:
+        """Scan a single bond event type across the block range.
+
+        Returns the events found. Pruned-receipt errors are skipped silently;
+        unrelated RPC failures count toward a 3-strike abort that surfaces as
+        a data_warning.
+        """
+        event_obj = getattr(self.csaccounting.events, event_name, None)
+        if event_obj is None:
+            return []
+
+        events: list[dict] = []
+        consecutive_failures = 0
+        for from_blk in range(start_block, current_block, chunk_size):
+            to_blk = min(from_blk + chunk_size - 1, current_block)
+            try:
+                logs = await asyncio.to_thread(
+                    partial(
+                        event_obj.get_logs,
+                        from_block=from_blk,
+                        to_block=to_blk,
+                        argument_filters={"nodeOperatorId": operator_id},
+                    )
+                )
+                for log in logs:
+                    # BondBurned/BondCharged use "burnedAmount"/"chargedAmount" as actual amount
+                    if event_name == "BondBurned":
+                        amount_wei = log["args"]["burnedAmount"]
+                    elif event_name == "BondCharged":
+                        amount_wei = log["args"]["chargedAmount"]
+                    else:
+                        amount_wei = log["args"]["amount"]
+
+                    events.append({
+                        "event_name": event_name,
+                        "event_type": event_type_key,
+                        "block_number": log["blockNumber"],
+                        "amount_wei": amount_wei,
+                        # wstETH amounts are approximate as ETH (wstETH deposits are rare in CSM)
+                        "amount_eth": amount_wei / 10**18,
+                        "tx_hash": log["transactionHash"].hex(),
+                        "flow_direction": flow_dir,
+                    })
+                consecutive_failures = 0
+            except Exception as e:
+                err_str = str(e)
+                # Pruned-receipt errors on pruning nodes (Nethermind, Geth in
+                # hybrid mode) are permanent for that block range — skip the
+                # chunk and keep scanning. Counting them toward the abort
+                # would make the scan give up before reaching unpruned data,
+                # which silently empties bond_events for operators created
+                # after the prune cutoff.
+                if "Receipt not available" in err_str or "missing trie node" in err_str:
+                    logger.debug(
+                        f"Bond event {event_name} blocks {from_blk}-{to_blk}: "
+                        f"receipts pruned on this RPC, skipping chunk"
+                    )
+                    continue
+                consecutive_failures += 1
+                logger.debug(
+                    f"Bond event query failed for {event_name} blocks {from_blk}-{to_blk}: {e}"
+                )
+                if consecutive_failures >= 3:
+                    logger.warning(
+                        f"Bond event scan aborted for {event_name} after 3 "
+                        f"consecutive RPC failures around block {from_blk} "
+                        f"(operator {operator_id}). Capital efficiency may be missing."
+                    )
+                    self._data_warnings.append(
+                        f"Bond event scan aborted for {event_name} "
+                        f"(operator {operator_id}) — RPC errors near block {from_blk:,}"
+                    )
+                    break
+        return events
+
     async def get_bond_event_history(
         self, operator_id: int, start_block: int | None = None
     ) -> list[dict]:
@@ -949,6 +1032,17 @@ class OnChainDataProvider:
 
         Returns list of dicts sorted by block number, each containing:
         event_type, block_number, timestamp, amount_wei, amount_eth, tx_hash, flow_direction
+
+        Caching is inline (not via @cached) so empty results get a short TTL —
+        an empty list almost always means the scan hit RPC trouble (e.g. pruned
+        receipts on Nethermind) rather than the operator legitimately having no
+        bond events, and a long TTL would poison subsequent refresh attempts.
+
+        Performance: event types are scanned concurrently via asyncio.gather
+        and chunks are 50k blocks (consistent with TokenRebased / distribution
+        log scans). Pass a tight `start_block` (caller usually derives one from
+        the operator's earliest known activity block) to avoid scanning
+        pre-creation history.
         """
         from datetime import datetime as dt_cls
         from datetime import timezone as tz
@@ -956,54 +1050,28 @@ class OnChainDataProvider:
         if start_block is None:
             start_block = 20873000  # CSM deployment block
 
+        cache = get_cache()
+        cache_key = f"bond_events:{operator_id}:{start_block}"
+        cached_result = cache.get(cache_key)
+        if cached_result is not _MISSING:
+            return cached_result
+
         current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
-        all_events = []
-        chunk_size = 10000
+        chunk_size = 50000
 
-        for event_name, (flow_dir, event_type_key) in self._BOND_EVENT_MAP.items():
-            event_obj = getattr(self.csaccounting.events, event_name, None)
-            if event_obj is None:
-                continue
-
-            consecutive_failures = 0
-            for from_blk in range(start_block, current_block, chunk_size):
-                to_blk = min(from_blk + chunk_size - 1, current_block)
-                try:
-                    logs = await asyncio.to_thread(
-                        partial(
-                            event_obj.get_logs,
-                            from_block=from_blk,
-                            to_block=to_blk,
-                            argument_filters={"nodeOperatorId": operator_id},
-                        )
-                    )
-                    for log in logs:
-                        # BondBurned/BondCharged use "burnedAmount"/"chargedAmount" as actual amount
-                        if event_name == "BondBurned":
-                            amount_wei = log["args"]["burnedAmount"]
-                        elif event_name == "BondCharged":
-                            amount_wei = log["args"]["chargedAmount"]
-                        else:
-                            amount_wei = log["args"]["amount"]
-
-                        all_events.append({
-                            "event_name": event_name,
-                            "event_type": event_type_key,
-                            "block_number": log["blockNumber"],
-                            "amount_wei": amount_wei,
-                            # wstETH amounts are approximate as ETH (wstETH deposits are rare in CSM)
-                            "amount_eth": amount_wei / 10**18,
-                            "tx_hash": log["transactionHash"].hex(),
-                            "flow_direction": flow_dir,
-                        })
-                    consecutive_failures = 0
-                except Exception as e:
-                    consecutive_failures += 1
-                    logger.debug(
-                        f"Bond event query failed for {event_name} blocks {from_blk}-{to_blk}: {e}"
-                    )
-                    if consecutive_failures >= 3:
-                        break
+        # Scan all bond event types in parallel — each makes ~N/chunk_size RPC
+        # calls and they're independent. With 8 event types, this is roughly
+        # an 8x speedup on the wall-clock time of the first uncached call.
+        per_event_results = await asyncio.gather(
+            *(
+                self._scan_one_bond_event(
+                    event_name, flow_dir, etk, operator_id,
+                    start_block, current_block, chunk_size,
+                )
+                for event_name, (flow_dir, etk) in self._BOND_EVENT_MAP.items()
+            )
+        )
+        all_events = [e for sub in per_event_results for e in sub]
 
         # Sort by block number and enrich with timestamps
         all_events.sort(key=lambda x: x["block_number"])
@@ -1025,6 +1093,11 @@ class OnChainDataProvider:
         for event in all_events:
             event["timestamp"] = block_timestamps.get(event["block_number"], "")
 
+        # Cache: full TTL for real results, short TTL for empties so a retry can
+        # quickly recover (an empty list usually means the scan failed, not that
+        # the operator has zero bond events).
+        ttl = 3600 if all_events else 60
+        cache.set(cache_key, all_events, ttl)
         return all_events
 
     async def _enrich_withdrawal_events(self, events: list[dict]) -> list[dict]:
