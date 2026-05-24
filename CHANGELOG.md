@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.2] - 2026-05-23
+
+### Fixed
+- **Capital Efficiency section silently missing for operators on RPC nodes with receipt pruning** — `get_bond_event_history` scans from CSM deployment block (20,873,000) in chunks; on nodes that prune transaction receipts (Nethermind's default, Geth in hybrid mode, etc.), the first chunks fail with `-32000 "Receipt not available"`, the 3-strike abort fires, and `bond_events` returns `[]`. `apy.capital_efficiency` is then dropped from the saved-operator JSON and the dashboard hides the section without explanation. The scan now distinguishes pruned-receipt errors (skip the chunk, don't count toward strikes) from real RPC failures (abort and surface a `data_warnings` entry + WARNING log). For operators created after the prune cutoff, all bond events are now collected even on pruned nodes.
+- **Empty bond_events result cached for a full hour** — A scan that produced `[]` was held in the 1h `@cached(ttl=3600)` decorator, so even after fixing the underlying issue a stale empty result lingered. Caching is now inline with a conditional TTL: 3600s for non-empty results, 60s for empty results, so retries can recover quickly.
+
+### Changed
+- **Bond event scan is ~13x faster on the uncached path.** Three changes combine: (1) the caller now passes a `start_block` derived from the operator's earliest distribution frame (with a 6-month safety margin) instead of scanning from CSM deployment; (2) chunk size raised from 10k to 50k blocks, consistent with other event scans; (3) the 8 bond event types are now scanned in parallel via `asyncio.gather` instead of sequentially. Measured against a local Nethermind RPC for an active operator (220 validators, 18 bond events), the uncached scan went from ~16 minutes to ~73 seconds. Cached results still hit in <1ms.
+- Bond event scan abort now logs at WARNING (was DEBUG) so the failure is visible at the default INFO log level.
+
 ## [0.6.1] - 2026-05-21
 
 ### Fixed
