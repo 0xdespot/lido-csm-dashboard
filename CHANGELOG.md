@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.3] - 2026-06-27
+
+### Fixed
+- **Unreachable RPC node crashed requests with an opaque 500 + traceback** — When the configured `ETH_RPC_URL` node was down (connection refused, DNS failure, timeout), web3 contract calls raised a raw `requests.exceptions.ConnectionError` that bubbled through the FastAPI route and was dumped as a full Python traceback behind a generic HTTP 500. Transport-level failures are now detected (`is_connection_error` walks the exception cause/context chain) and translated into a typed `RPCUnavailableError`, which a FastAPI exception handler renders as **HTTP 503** with an actionable body — `Ethereum RPC node unreachable at <host>. Check that the node is running and ETH_RPC_URL is correct.` — shown directly in the dashboard's error banner. The host is sanitized to `scheme://host:port`, so an API key embedded in the RPC URL is never leaked, and a single WARNING is logged instead of a traceback.
+- **A dead node masqueraded as "operator not found" on the address-lookup path** — `find_operator_by_address` swallowed all exceptions and ground through every operator, so an unreachable node returned a slow, misleading 404. Connection failures now short-circuit to the 503. Likewise `get_bond_curve_id` no longer silently reports curve `0`, and the best-effort APY / capital-efficiency / strikes / withdrawal-enrichment steps re-raise connection failures instead of degrading to partial data. Genuinely degraded conditions (pruned receipts, unsupported batch, single bad block) keep their existing graceful handling.
+
+### Added
+- **CLI surfaces unreachable nodes cleanly** — Instead of a traceback, `csm rewards` prints `RPC node unreachable at <host> — check ETH_RPC_URL / --rpc` (or `{"error": ...}` in `--json` mode) and exits 1.
+
 ## [0.6.2] - 2026-05-23
 
 ### Fixed
