@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ..core.rpc_errors import RPCUnavailableError
 from ..core.types import OperatorRewards
 from ..core.version import __version__
 from ..services.operator_service import OperatorService
@@ -217,23 +218,32 @@ def rewards(
 
     service = OperatorService(rpc_url)
 
-    if not output_json:
-        console.print()
-        status_msg = "[bold blue]Fetching operator data..."
-        if detailed or history or withdrawals:
-            status_msg = "[bold blue]Fetching operator data and validator status..."
-        with console.status(status_msg):
+    try:
+        if not output_json:
+            console.print()
+            status_msg = "[bold blue]Fetching operator data..."
+            if detailed or history or withdrawals:
+                status_msg = "[bold blue]Fetching operator data and validator status..."
+            with console.status(status_msg):
+                if operator_id is not None:
+                    rewards = run_async(service.get_operator_by_id(operator_id, detailed or history, history, withdrawals))
+                else:
+                    console.print(f"[dim]Looking up operator for address: {address}[/dim]")
+                    rewards = run_async(service.get_operator_by_address(address, detailed or history, history, withdrawals))
+        else:
+            # JSON mode - no status output
             if operator_id is not None:
                 rewards = run_async(service.get_operator_by_id(operator_id, detailed or history, history, withdrawals))
             else:
-                console.print(f"[dim]Looking up operator for address: {address}[/dim]")
                 rewards = run_async(service.get_operator_by_address(address, detailed or history, history, withdrawals))
-    else:
-        # JSON mode - no status output
-        if operator_id is not None:
-            rewards = run_async(service.get_operator_by_id(operator_id, detailed or history, history, withdrawals))
+    except RPCUnavailableError as e:
+        if output_json:
+            print(json.dumps({"error": f"RPC node unreachable at {e.host}"}, indent=2))
         else:
-            rewards = run_async(service.get_operator_by_address(address, detailed or history, history, withdrawals))
+            console.print(
+                f"[red]RPC node unreachable at {e.host} — check ETH_RPC_URL / --rpc[/red]"
+            )
+        raise typer.Exit(1)
 
     if rewards is None:
         if output_json:

@@ -4,9 +4,10 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..core.rpc_errors import RPCUnavailableError
 from ..core.version import __version__
 from .routes import router
 
@@ -37,6 +38,21 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"Request failed: {request.method} {request.url.path} -> {e}")
             raise
+
+    @app.exception_handler(RPCUnavailableError)
+    async def rpc_unavailable_handler(request: Request, exc: RPCUnavailableError):
+        """Turn an unreachable RPC node into a clean 503 instead of a 500 +
+        traceback. The frontend renders ``detail`` in its error banner."""
+        logger.warning(f"RPC node unreachable: {exc.host}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": (
+                    f"Ethereum RPC node unreachable at {exc.host}. "
+                    f"Check that the node is running and ETH_RPC_URL is correct."
+                )
+            },
+        )
 
     app.include_router(router, prefix="/api")
 

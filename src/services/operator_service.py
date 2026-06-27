@@ -16,6 +16,7 @@ from ..core.types import (
     StrikeSummary,
     WithdrawalEvent,
 )
+from ..core.rpc_errors import RPCUnavailableError
 from .capital_efficiency import calculate_capital_efficiency
 from ..data.beacon import (
     BeaconDataProvider,
@@ -318,6 +319,8 @@ class OperatorService:
                             daily_rate = current_eth / Decimal(current_days)
                             next_distribution_est_eth = float(daily_rate * Decimal(current_days))
 
+            except RPCUnavailableError:
+                raise
             except Exception as e:
                 # If historical APY calculation fails, continue without it
                 logger.warning(f"Historical APY calculation failed for operator {operator_id}: {e}")
@@ -583,6 +586,8 @@ class OperatorService:
                     )
                     if ce_result:
                         capital_efficiency = CapitalEfficiency(**ce_result)
+            except RPCUnavailableError:
+                raise
             except Exception as e:
                 logger.warning(f"Capital efficiency calculation failed for operator {operator_id}: {e}")
 
@@ -648,6 +653,8 @@ class OperatorService:
                 max_strikes=summary.get("max_strikes", 0),
                 strike_threshold=summary.get("strike_threshold", 3),
             )
+        except RPCUnavailableError:
+            raise
         except Exception as e:
             # If strikes fetch fails, continue with empty summary
             logger.warning(f"Failed to fetch strikes for operator {operator_id}: {e}")
@@ -678,6 +685,8 @@ class OperatorService:
         """
         try:
             log_history = await self.onchain.get_distribution_log_history()
+        except RPCUnavailableError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to fetch distribution log history: {e}")
             return []
@@ -733,6 +742,8 @@ class OperatorService:
 
             validators = await self.beacon.get_validators_by_pubkeys(pubkeys)
             return get_earliest_activation(validators)
+        except RPCUnavailableError:
+            raise
         except Exception as e:
             logger.debug(f"Failed to get active_since for operator {operator_id}: {e}")
             return None
@@ -762,6 +773,8 @@ class OperatorService:
                 )
                 for e in events
             ]
+        except RPCUnavailableError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to fetch withdrawal history for operator {operator_id}: {e}")
             return []

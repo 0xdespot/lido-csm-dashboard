@@ -12,6 +12,7 @@ import httpx
 from web3 import Web3
 
 from ..core.config import get_settings
+from ..core.rpc_errors import RPCUnavailableError, is_connection_error, safe_rpc_host
 from .cache import cached
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ class StrikesProvider:
         self.settings = get_settings()
         # Use configurable gateways from settings (comma-separated)
         self.gateways = [g.strip() for g in self.settings.ipfs_gateways.split(",") if g.strip()]
+        self._rpc_host = safe_rpc_host(rpc_url or self.settings.eth_rpc_url)
         self.w3 = Web3(Web3.HTTPProvider(rpc_url or self.settings.eth_rpc_url))
         self.cache_dir = cache_dir or Path.home() / ".cache" / "csm-dashboard" / "strikes"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -127,9 +129,14 @@ class StrikesProvider:
     @cached(ttl=300)  # Cache CID for 5 minutes
     async def get_tree_cid(self) -> str:
         """Get the current strikes tree CID from the contract."""
-        return await asyncio.to_thread(
-            self.csstrikes.functions.treeCid().call
-        )
+        try:
+            return await asyncio.to_thread(
+                self.csstrikes.functions.treeCid().call
+            )
+        except Exception as e:
+            if is_connection_error(e):
+                raise RPCUnavailableError(self._rpc_host) from e
+            raise
 
     async def _fetch_tree_from_ipfs(self, cid: str) -> dict | None:
         """Fetch tree data from IPFS gateways."""

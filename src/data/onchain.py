@@ -4,7 +4,6 @@ import asyncio
 import logging
 from decimal import Decimal
 from functools import partial
-from urllib.parse import urlparse
 
 from web3 import Web3
 
@@ -18,6 +17,7 @@ from ..core.contracts import (
     STETH_ABI,
     WITHDRAWAL_QUEUE_ABI,
 )
+from ..core.rpc_errors import RPCUnavailableError, is_connection_error, safe_rpc_host
 from ..core.types import BondSummary, NodeOperator
 from .cache import _MISSING, SimpleCache, cached, get_cache
 from .discovered_cids import load_discovered_cids, merge_cid_sources, record_new_cids
@@ -44,10 +44,7 @@ def _log_rpc_startup(w3: Web3, url: str) -> None:
         return
     _rpc_startup_logged = True
 
-    parsed = urlparse(url)
-    safe = f"{parsed.scheme}://{parsed.hostname}"
-    if parsed.port:
-        safe += f":{parsed.port}"
+    safe = safe_rpc_host(url)
     try:
         chain_id = w3.eth.chain_id
         block = w3.eth.block_number
@@ -69,6 +66,7 @@ class OnChainDataProvider:
         self.settings = get_settings()
         self._data_warnings: list[str] = []
         effective_rpc_url = rpc_url or self.settings.eth_rpc_url
+        self._rpc_host = safe_rpc_host(effective_rpc_url)
         self.w3 = Web3(
             Web3.HTTPProvider(
                 effective_rpc_url,
@@ -99,17 +97,35 @@ class OnChainDataProvider:
             abi=WITHDRAWAL_QUEUE_ABI,
         )
 
+    async def _rpc_call(self, fn, *args, **kwargs):
+        """Run a blocking web3 call in a thread, translating transport-level
+        failures into a distinct RPCUnavailableError.
+
+        A connection refusal / DNS failure / timeout means the node is
+        unreachable — surfacing it as a typed error lets callers avoid
+        mistaking a dead node for "no data" and lets the web/CLI layer show a
+        clear message instead of an opaque 500/traceback.
+        """
+        try:
+            return await asyncio.to_thread(fn, *args, **kwargs)
+        except RPCUnavailableError:
+            raise
+        except Exception as e:
+            if is_connection_error(e):
+                raise RPCUnavailableError(self._rpc_host) from e
+            raise
+
     @cached(ttl=60)
     async def get_node_operators_count(self) -> int:
         """Get total number of node operators."""
-        return await asyncio.to_thread(
+        return await self._rpc_call(
             self.csmodule.functions.getNodeOperatorsCount().call
         )
 
     @cached(ttl=300)
     async def get_node_operator(self, operator_id: int) -> NodeOperator:
         """Get node operator data by ID."""
-        data = await asyncio.to_thread(
+        data = await self._rpc_call(
             self.csmodule.functions.getNodeOperator(operator_id).call
         )
         return NodeOperator(
@@ -156,7 +172,7 @@ class OnChainDataProvider:
                                 batch.add(self.csmodule.functions.getNodeOperator(op_id))
                             return batch.execute()
 
-                    results = await asyncio.to_thread(run_batch)
+                    results = await self._rpc_call(run_batch)
 
                     for i, data in enumerate(results):
                         op_id = start + i
@@ -165,6 +181,8 @@ class OnChainDataProvider:
                         if manager.lower() == address.lower() or reward.lower() == address.lower():
                             return op_id
                     continue  # Batch succeeded, move to next batch
+                except RPCUnavailableError:
+                    raise  # Node is down — don't mistake it for "no batch support"
                 except Exception:
                     # Batch not supported by this RPC, fall back to sequential
                     batch_supported = False
@@ -172,7 +190,7 @@ class OnChainDataProvider:
             # Sequential fallback with rate limiting
             for op_id in range(start, end):
                 try:
-                    data = await asyncio.to_thread(
+                    data = await self._rpc_call(
                         self.csmodule.functions.getNodeOperator(op_id).call
                     )
                     manager = data[10]
@@ -181,6 +199,8 @@ class OnChainDataProvider:
                         return op_id
                     # Small delay to avoid rate limiting on public RPCs
                     await asyncio.sleep(0.05)
+                except RPCUnavailableError:
+                    raise  # Node is down — don't grind through every operator
                 except Exception:
                     await asyncio.sleep(0.1)  # Longer delay on error
                     continue
@@ -196,9 +216,11 @@ class OnChainDataProvider:
             1 = ICS/Legacy EA (1.5 ETH first validator, 1.3 ETH subsequent)
         """
         try:
-            return await asyncio.to_thread(
+            return await self._rpc_call(
                 self.csaccounting.functions.getBondCurveId(operator_id).call
             )
+        except RPCUnavailableError:
+            raise  # Node is down — don't silently report curve 0
         except Exception:
             # Fall back to 0 (Permissionless) if call fails
             return 0
@@ -271,7 +293,7 @@ class OnChainDataProvider:
     @cached(ttl=60)
     async def get_bond_summary(self, operator_id: int) -> BondSummary:
         """Get bond summary for an operator."""
-        current, required = await asyncio.to_thread(
+        current, required = await self._rpc_call(
             self.csaccounting.functions.getBondSummary(operator_id).call
         )
 
@@ -290,7 +312,7 @@ class OnChainDataProvider:
     @cached(ttl=60)
     async def get_distributed_shares(self, operator_id: int) -> int:
         """Get already distributed (claimed) shares for operator."""
-        return await asyncio.to_thread(
+        return await self._rpc_call(
             self.csfeedistributor.functions.distributedShares(operator_id).call
         )
 
@@ -299,7 +321,7 @@ class OnChainDataProvider:
         """Convert stETH shares to ETH value."""
         if shares == 0:
             return Decimal(0)
-        eth_wei = await asyncio.to_thread(
+        eth_wei = await self._rpc_call(
             self.steth.functions.getPooledEthByShares(shares).call
         )
         return Decimal(eth_wei) / Decimal(10**18)
@@ -316,7 +338,7 @@ class OnChainDataProvider:
 
         for batch_start in range(start, start + count, batch_size):
             batch_count = min(batch_size, start + count - batch_start)
-            keys_bytes = await asyncio.to_thread(
+            keys_bytes = await self._rpc_call(
                 self.csmodule.functions.getSigningKeys(
                     operator_id, batch_start, batch_count
                 ).call
@@ -336,7 +358,7 @@ class OnChainDataProvider:
 
     async def get_current_log_cid(self) -> str:
         """Get the current distribution log CID from the contract."""
-        return await asyncio.to_thread(
+        return await self._rpc_call(
             self.csfeedistributor.functions.logCid().call
         )
 
@@ -419,7 +441,7 @@ class OnChainDataProvider:
         current_block = None
         try:
             current_cid = await self.get_current_log_cid()
-            current_block = await asyncio.to_thread(
+            current_block = await self._rpc_call(
                 lambda: self.w3.eth.block_number
             )
             if current_cid:
@@ -433,6 +455,8 @@ class OnChainDataProvider:
                         f"Added current distribution CID from contract "
                         f"(not found via other methods)"
                     )
+        except RPCUnavailableError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to get current log CID from contract: {e}")
 
@@ -478,7 +502,7 @@ class OnChainDataProvider:
             (events, completed) — `completed` is True when the full block
             range was scanned without hitting the consecutive-failure abort.
         """
-        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
+        current_block = await self._rpc_call(lambda: self.w3.eth.block_number)
         all_events = []
         consecutive_failures = 0
         max_consecutive_failures = 10
@@ -489,7 +513,7 @@ class OnChainDataProvider:
         while from_block < current_block:
             to_block = min(from_block + current_chunk_size - 1, current_block)
             try:
-                events = await asyncio.to_thread(
+                events = await self._rpc_call(
                     partial(
                         self.csfeedistributor.events.DistributionLogUpdated.get_logs,
                         from_block=from_block,
@@ -503,6 +527,8 @@ class OnChainDataProvider:
                 consecutive_failures = 0
                 current_chunk_size = chunk_size  # Reset to full size on success
                 from_block = to_block + 1
+            except RPCUnavailableError:
+                raise  # Node fully down — not a chunk-size/range issue
             except Exception as e:
                 # Try halving chunk size before counting as a real failure
                 if current_chunk_size > 10000:
@@ -648,7 +674,7 @@ class OnChainDataProvider:
         chunk_size: int = 10000,
     ) -> list[dict]:
         """Query WithdrawalRequested events in chunks via RPC."""
-        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
+        current_block = await self._rpc_call(lambda: self.w3.eth.block_number)
         all_events = []
 
         requestor = Web3.to_checksum_address(requestor)
@@ -657,7 +683,7 @@ class OnChainDataProvider:
         for from_blk in range(start_block, current_block, chunk_size):
             to_blk = min(from_blk + chunk_size - 1, current_block)
             try:
-                events = await asyncio.to_thread(
+                events = await self._rpc_call(
                     partial(
                         self.withdrawal_queue.events.WithdrawalRequested.get_logs,
                         from_block=from_blk,
@@ -678,6 +704,8 @@ class OnChainDataProvider:
                             "amount_shares": e["args"]["amountOfShares"],
                         }
                     )
+            except RPCUnavailableError:
+                raise
             except Exception:
                 # If chunked queries fail, give up on this method
                 return []
@@ -696,9 +724,11 @@ class OnChainDataProvider:
         # Get status for all request IDs
         request_ids = [e["request_id"] for e in events]
         try:
-            statuses = await asyncio.to_thread(
+            statuses = await self._rpc_call(
                 self.withdrawal_queue.functions.getWithdrawalStatus(request_ids).call
             )
+        except RPCUnavailableError:
+            raise
         except Exception:
             # If status query fails, set all as unknown
             statuses = [None] * len(events)
@@ -711,7 +741,7 @@ class OnChainDataProvider:
         for i, event in enumerate(events):
             try:
                 # Get block timestamp
-                block = await asyncio.to_thread(
+                block = await self._rpc_call(
                     partial(self.w3.eth.get_block, event["block"])
                 )
                 timestamp = datetime.fromtimestamp(
@@ -752,16 +782,20 @@ class OnChainDataProvider:
                     enriched_event["claim_tx_hash"] = claim["tx_hash"]
                     # Get claim timestamp
                     try:
-                        claim_block = await asyncio.to_thread(
+                        claim_block = await self._rpc_call(
                             partial(self.w3.eth.get_block, claim["block"])
                         )
                         enriched_event["claim_timestamp"] = datetime.fromtimestamp(
                             claim_block["timestamp"], tz=timezone.utc
                         ).isoformat()
+                    except RPCUnavailableError:
+                        raise
                     except Exception as e:
                         logger.debug(f"Failed to get claim timestamp for block {claim.get('block')}: {e}")
 
                 enriched.append(enriched_event)
+            except RPCUnavailableError:
+                raise
             except Exception as e:
                 logger.debug(f"Failed to enrich withdrawal event: {e}")
                 continue
@@ -786,13 +820,13 @@ class OnChainDataProvider:
                 return events
 
         # RPC fallback - query in chunks
-        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
+        current_block = await self._rpc_call(lambda: self.w3.eth.block_number)
         all_events = []
 
         for from_blk in range(start_block, current_block, 10000):
             to_blk = min(from_blk + 9999, current_block)
             try:
-                logs = await asyncio.to_thread(
+                logs = await self._rpc_call(
                     partial(
                         self.withdrawal_queue.events.WithdrawalClaimed.get_logs,
                         from_block=from_blk,
@@ -809,6 +843,8 @@ class OnChainDataProvider:
                             "block": e["blockNumber"],
                         }
                     )
+            except RPCUnavailableError:
+                raise
             except Exception:
                 continue
 
@@ -822,7 +858,7 @@ class OnChainDataProvider:
         chunk_size: int = 10000,
     ) -> list[dict]:
         """Query Transfer events in smaller chunks."""
-        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
+        current_block = await self._rpc_call(lambda: self.w3.eth.block_number)
         all_events = []
 
         from_address = Web3.to_checksum_address(from_address)
@@ -831,7 +867,7 @@ class OnChainDataProvider:
         for from_blk in range(start_block, current_block, chunk_size):
             to_blk = min(from_blk + chunk_size - 1, current_block)
             try:
-                events = await asyncio.to_thread(
+                events = await self._rpc_call(
                     partial(
                         self.steth.events.Transfer.get_logs,
                         from_block=from_blk,
@@ -850,6 +886,8 @@ class OnChainDataProvider:
                             "value": e["args"]["value"],
                         }
                     )
+            except RPCUnavailableError:
+                raise
             except Exception:
                 # If chunked queries fail, give up on this method
                 return []
@@ -865,6 +903,8 @@ class OnChainDataProvider:
         """
         try:
             events = await self._fetch_token_rebased_events()
+        except RPCUnavailableError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to fetch TokenRebased events: {e}")
             return []
@@ -898,7 +938,7 @@ class OnChainDataProvider:
         self, start_block: int = 20_000_000, chunk_size: int = 50_000
     ) -> list:
         """Fetch TokenRebased events from stETH contract in chunks."""
-        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
+        current_block = await self._rpc_call(lambda: self.w3.eth.block_number)
         all_events = []
         consecutive_failures = 0
         max_consecutive_failures = 3
@@ -906,7 +946,7 @@ class OnChainDataProvider:
         for from_block in range(start_block, current_block, chunk_size):
             to_block = min(from_block + chunk_size - 1, current_block)
             try:
-                events = await asyncio.to_thread(
+                events = await self._rpc_call(
                     partial(
                         self.steth.events.TokenRebased.get_logs,
                         from_block=from_block,
@@ -915,6 +955,8 @@ class OnChainDataProvider:
                 )
                 all_events.extend(events)
                 consecutive_failures = 0
+            except RPCUnavailableError:
+                raise  # Node fully down — not a transient chunk failure
             except Exception as e:
                 consecutive_failures += 1
                 logger.debug(
@@ -966,7 +1008,7 @@ class OnChainDataProvider:
         for from_blk in range(start_block, current_block, chunk_size):
             to_blk = min(from_blk + chunk_size - 1, current_block)
             try:
-                logs = await asyncio.to_thread(
+                logs = await self._rpc_call(
                     partial(
                         event_obj.get_logs,
                         from_block=from_blk,
@@ -994,6 +1036,8 @@ class OnChainDataProvider:
                         "flow_direction": flow_dir,
                     })
                 consecutive_failures = 0
+            except RPCUnavailableError:
+                raise  # Node fully down — distinct from pruned-receipt/chunk errors
             except Exception as e:
                 err_str = str(e)
                 # Pruned-receipt errors on pruning nodes (Nethermind, Geth in
@@ -1056,7 +1100,7 @@ class OnChainDataProvider:
         if cached_result is not _MISSING:
             return cached_result
 
-        current_block = await asyncio.to_thread(lambda: self.w3.eth.block_number)
+        current_block = await self._rpc_call(lambda: self.w3.eth.block_number)
         chunk_size = 50000
 
         # Scan all bond event types in parallel — each makes ~N/chunk_size RPC
@@ -1081,12 +1125,14 @@ class OnChainDataProvider:
         block_timestamps = {}
         for blk_num in unique_blocks:
             try:
-                block_data = await asyncio.to_thread(
+                block_data = await self._rpc_call(
                     partial(self.w3.eth.get_block, blk_num)
                 )
                 block_timestamps[blk_num] = dt_cls.fromtimestamp(
                     block_data["timestamp"], tz=tz.utc
                 ).isoformat()
+            except RPCUnavailableError:
+                raise
             except Exception:
                 block_timestamps[blk_num] = ""
 
@@ -1108,7 +1154,7 @@ class OnChainDataProvider:
         for event in events:
             try:
                 # Get block timestamp
-                block = await asyncio.to_thread(
+                block = await self._rpc_call(
                     partial(self.w3.eth.get_block, event["block"])
                 )
                 timestamp = datetime.fromtimestamp(
@@ -1131,6 +1177,8 @@ class OnChainDataProvider:
                         "tx_hash": event["tx_hash"],
                     }
                 )
+            except RPCUnavailableError:
+                raise
             except Exception:
                 # Skip events we can't enrich
                 continue
