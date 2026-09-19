@@ -130,6 +130,12 @@ def create_app() -> FastAPI:
         </div>
 
         <div id="results" class="hidden">
+            <!-- Data quality warnings (data_warnings from the API). Previously
+                 returned by every endpoint and rendered nowhere, so partial
+                 failures such as "18/24 IPFS logs failed" were invisible. -->
+            <div id="data-warnings" class="hidden bg-yellow-900/40 border border-yellow-600 rounded p-4 mb-4">
+                <ul id="data-warnings-list" class="text-yellow-300 text-sm list-disc list-inside space-y-1"></ul>
+            </div>
             <div class="bg-gray-800 rounded-lg p-6 mb-6">
                 <div class="flex justify-between items-start">
                     <h2 class="text-xl font-bold mb-2">
@@ -572,6 +578,120 @@ def create_app() -> FastAPI:
             return val !== null && val !== undefined ? val.toFixed(2) + '%' : '--%';
         }
 
+        // Server-supplied text (error details, data warnings) is inserted via
+        // innerHTML, so escape it rather than trusting it as markup.
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+
+        // Surface data-quality warnings the API already returns. Accumulates
+        // across calls (history and withdrawals are fetched separately) and
+        // de-duplicates, so a warning from one fetch is not wiped by the next.
+        const seenDataWarnings = new Set();
+        function renderDataWarnings(warnings) {
+            const box = document.getElementById('data-warnings');
+            const list = document.getElementById('data-warnings-list');
+            if (!warnings || warnings.length === 0) return;
+            let added = false;
+            warnings.forEach(w => {
+                if (seenDataWarnings.has(w)) return;
+                seenDataWarnings.add(w);
+                list.innerHTML += `<li>${escapeHtml(w)}</li>`;
+                added = true;
+            });
+            if (added) box.classList.remove('hidden');
+        }
+
+        function clearDataWarnings() {
+            seenDataWarnings.clear();
+            document.getElementById('data-warnings-list').innerHTML = '';
+            document.getElementById('data-warnings').classList.add('hidden');
+        }
+
+        // Render the withdrawal table: rows, the claimed total, and a pending
+        // unstETH note. Shared by both entry points — the cached saved-operator
+        // view and the live "Load Withdrawals" fetch — which previously held
+        // near-identical copies that had already drifted, and only one of which
+        // appended a total row.
+        function renderWithdrawals(withdrawals) {
+            if (!withdrawals || withdrawals.length === 0) {
+                withdrawalTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">No withdrawals found</td></tr>';
+                return;
+            }
+
+            const isClaimedUnsteth = w =>
+                w.withdrawal_type === 'unstETH' && w.claimed_eth !== null && w.claimed_eth !== undefined;
+
+            const rows = withdrawals.map((w, i) => {
+                const date = new Date(w.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const wType = w.withdrawal_type || 'stETH';
+                // For unstETH show the ETH actually received; otherwise the stETH value.
+                const amount = isClaimedUnsteth(w)
+                    ? w.claimed_eth.toFixed(4) + ' ETH'
+                    : w.eth_value.toFixed(4) + ' stETH';
+                let status;
+                if (wType === 'unstETH' && w.status) {
+                    const statusColors = {
+                        'pending': 'text-yellow-400',
+                        'finalized': 'text-blue-400',
+                        'claimed': 'text-green-400',
+                    };
+                    const statusLabels = {
+                        'pending': 'Pending',
+                        'finalized': 'Ready',
+                        'claimed': 'Claimed',
+                    };
+                    status = `<span class="${statusColors[w.status] || 'text-gray-400'}">${statusLabels[w.status] || w.status}</span>`;
+                } else if (wType !== 'unstETH') {
+                    status = '<span class="text-green-400">Claimed</span>';
+                } else {
+                    status = '--';
+                }
+                return `<tr class="border-t border-gray-700">
+                    <td class="py-2">${i + 1}</td>
+                    <td class="py-2">${date}</td>
+                    <td class="py-2"><span class="${wType === 'unstETH' ? 'text-purple-400' : 'text-blue-400'}">${wType}</span></td>
+                    <td class="py-2 text-right text-green-400">${amount}</td>
+                    <td class="py-2">${status}</td>
+                </tr>`;
+            });
+
+            // stETH and claimed ETH are different units and must not be summed
+            // together, so the total is reported as two figures — matching the
+            // CLI's "Total claimed" line.
+            const stethTotal = withdrawals
+                .filter(w => w.withdrawal_type !== 'unstETH')
+                .reduce((sum, w) => sum + w.eth_value, 0);
+            const ethTotal = withdrawals
+                .filter(isClaimedUnsteth)
+                .reduce((sum, w) => sum + w.claimed_eth, 0);
+            let totalStr = '';
+            if (stethTotal > 0) totalStr += stethTotal.toFixed(4) + ' stETH';
+            if (ethTotal > 0) totalStr += (totalStr ? ' + ' : '') + ethTotal.toFixed(4) + ' ETH';
+            if (!totalStr) totalStr = '0';
+
+            rows.push(`<tr class="border-t-2 border-gray-600 font-bold">
+                <td class="py-2" colspan="3">Total Claimed</td>
+                <td class="py-2 text-right text-yellow-400" colspan="2">${totalStr}</td>
+            </tr>`);
+
+            // In-flight requests are not claimed yet, so they stay out of the
+            // total and get their own note, as the CLI does.
+            const pending = withdrawals.filter(w =>
+                w.withdrawal_type === 'unstETH' && (w.status === 'pending' || w.status === 'finalized'));
+            if (pending.length > 0) {
+                const pendingTotal = pending.reduce((sum, w) => sum + w.eth_value, 0);
+                const readyCount = pending.filter(w => w.status === 'finalized').length;
+                rows.push(`<tr class="border-t border-gray-700">
+                    <td class="py-2 text-yellow-400" colspan="5">Note: ${pending.length} unstETH request(s) pending (${readyCount} ready to claim) totaling ~${pendingTotal.toFixed(4)} stETH</td>
+                </tr>`);
+            }
+
+            withdrawalTbody.innerHTML = rows.join('');
+        }
+
         function renderCapitalEfficiency(ce) {
             const ceSection = document.getElementById('capital-efficiency-section');
             const xirrEl = document.getElementById('ce-xirr');
@@ -618,6 +738,7 @@ def create_app() -> FastAPI:
         // Reset UI to initial state
         function resetUI() {
             error.classList.add('hidden');
+            clearDataWarnings();
             results.classList.add('hidden');
             validatorStatus.classList.add('hidden');
             apySection.classList.add('hidden');
@@ -833,54 +954,20 @@ def create_app() -> FastAPI:
                 historyTable.classList.remove('hidden');
                 historyLoaded = true;
                 loadHistoryBtn.textContent = 'Hide History';
+            } else if (data.apy?.frames) {
+                // Explicitly empty frames — mirror the withdrawals path rather
+                // than leaving a blank region with the button still unclicked.
+                historyTbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-gray-400">No history available</td></tr>';
+                historyTable.classList.remove('hidden');
+                historyLoaded = true;
+                loadHistoryBtn.textContent = 'Hide History';
             }
 
-            // Withdrawal History (if withdrawals available in cached data)
-            if (data.withdrawals && data.withdrawals.length > 0) {
-                withdrawalTbody.innerHTML = data.withdrawals.map((w, i) => {
-                    const date = new Date(w.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    const wType = w.withdrawal_type || 'stETH';
-                    let amount, amountClass;
-                    if (wType === 'unstETH' && w.claimed_eth !== null) {
-                        amount = w.claimed_eth.toFixed(4) + ' ETH';
-                        amountClass = 'text-green-400';
-                    } else {
-                        amount = w.eth_value.toFixed(4) + ' stETH';
-                        amountClass = 'text-green-400';
-                    }
-                    let status;
-                    if (wType === 'unstETH' && w.status) {
-                        const statusColors = {
-                            'pending': 'text-yellow-400',
-                            'finalized': 'text-blue-400',
-                            'claimed': 'text-green-400',
-                        };
-                        const statusLabels = {
-                            'pending': 'Pending',
-                            'finalized': 'Ready',
-                            'claimed': 'Claimed',
-                        };
-                        status = `<span class="${statusColors[w.status] || 'text-gray-400'}">${statusLabels[w.status] || w.status}</span>`;
-                    } else if (wType !== 'unstETH') {
-                        status = '<span class="text-green-400">Claimed</span>';
-                    } else {
-                        status = '--';
-                    }
-                    return `<tr class="border-t border-gray-700">
-                        <td class="py-2">${i + 1}</td>
-                        <td class="py-2">${date}</td>
-                        <td class="py-2">${wType}</td>
-                        <td class="py-2 text-right ${amountClass}">${amount}</td>
-                        <td class="py-2">${status}</td>
-                    </tr>`;
-                }).join('');
-
-                withdrawalTable.classList.remove('hidden');
-                withdrawalsLoaded = true;
-                loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
-            } else if (data.withdrawals && data.withdrawals.length === 0) {
-                // Explicit empty withdrawals
-                withdrawalTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">No withdrawals found</td></tr>';
+            // Withdrawal History (if withdrawals available in cached data).
+            // Shares one renderer with the live fetch path so the total row
+            // and styling stay identical between them.
+            if (data.withdrawals) {
+                renderWithdrawals(data.withdrawals);
                 withdrawalTable.classList.remove('hidden');
                 withdrawalsLoaded = true;
                 loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
@@ -910,6 +997,7 @@ def create_app() -> FastAPI:
                 }
 
                 displayOperatorData(data);
+                renderDataWarnings(data.data_warnings);
             } catch (err) {
                 if (isAbortError(err)) return;  // Page is unloading, ignore
                 loading.classList.add('hidden');
@@ -1249,9 +1337,24 @@ def create_app() -> FastAPI:
 
                 historyLoading.classList.add('hidden');
 
-                if (!response.ok || !data.apy || !data.apy.frames) {
+                // A 503/500 is not "no history" — show the real reason (the
+                // RPC-unreachable handler builds an actionable message) and
+                // leave historyLoaded false so the button retries rather than
+                // flipping to "Hide History" over an error.
+                if (!response.ok) {
+                    const msg = (data && data.detail) ? data.detail : `Request failed (HTTP ${response.status})`;
+                    historyTbody.innerHTML = `<tr><td colspan="7" class="py-4 text-center text-red-400">${escapeHtml(msg)}</td></tr>`;
+                    historyTable.classList.remove('hidden');
+                    renderDataWarnings(data && data.data_warnings);
+                    return;
+                }
+
+                if (!data.apy || !data.apy.frames || data.apy.frames.length === 0) {
                     historyTbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-gray-400">No history available</td></tr>';
                     historyTable.classList.remove('hidden');
+                    historyLoaded = true;
+                    loadHistoryBtn.textContent = 'Hide History';
+                    renderDataWarnings(data.data_warnings);
                     return;
                 }
 
@@ -1332,71 +1435,18 @@ def create_app() -> FastAPI:
 
                 withdrawalLoading.classList.add('hidden');
 
-                if (!response.ok || !data.withdrawals || data.withdrawals.length === 0) {
-                    withdrawalTbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">No withdrawals found</td></tr>';
+                // A failed request is not the same as "no withdrawals" — show
+                // what actually went wrong (e.g. the 503 RPC-unreachable text)
+                // and leave withdrawalsLoaded false so the button retries.
+                if (!response.ok) {
+                    const msg = (data && data.detail) ? data.detail : `Request failed (HTTP ${response.status})`;
+                    withdrawalTbody.innerHTML = `<tr><td colspan="5" class="py-4 text-center text-red-400">${escapeHtml(msg)}</td></tr>`;
                     withdrawalTable.classList.remove('hidden');
-                    withdrawalsLoaded = true;
-                    loadWithdrawalsBtn.textContent = 'Hide Withdrawals';
                     return;
                 }
 
-                // Populate withdrawal table
-                withdrawalTbody.innerHTML = data.withdrawals.map((w, i) => {
-                    const date = new Date(w.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                    const wType = w.withdrawal_type || 'stETH';
-                    // For unstETH, show claimed ETH if available, otherwise show stETH value
-                    let amount, amountClass;
-                    if (wType === 'unstETH' && w.claimed_eth !== null) {
-                        amount = w.claimed_eth.toFixed(4) + ' ETH';
-                        amountClass = 'text-green-400';
-                    } else {
-                        amount = w.eth_value.toFixed(4) + ' stETH';
-                        amountClass = 'text-green-400';
-                    }
-                    // Status for unstETH
-                    let status;
-                    if (wType === 'unstETH' && w.status) {
-                        const statusColors = {
-                            'pending': 'text-yellow-400',
-                            'finalized': 'text-blue-400',
-                            'claimed': 'text-green-400',
-                        };
-                        const statusLabels = {
-                            'pending': 'Pending',
-                            'finalized': 'Ready',
-                            'claimed': 'Claimed',
-                        };
-                        status = `<span class="${statusColors[w.status] || 'text-gray-400'}">${statusLabels[w.status] || w.status}</span>`;
-                    } else if (wType !== 'unstETH') {
-                        status = '<span class="text-green-400">Claimed</span>';
-                    } else {
-                        status = '--';
-                    }
-                    return `<tr class="border-t border-gray-700">
-                        <td class="py-2">${i + 1}</td>
-                        <td class="py-2">${date}</td>
-                        <td class="py-2"><span class="${wType === 'unstETH' ? 'text-purple-400' : 'text-blue-400'}">${wType}</span></td>
-                        <td class="py-2 text-right ${amountClass}">${amount}</td>
-                        <td class="py-2">${status}</td>
-                    </tr>`;
-                }).join('');
-
-                // Add total row
-                const stethTotal = data.withdrawals
-                    .filter(w => w.withdrawal_type !== 'unstETH')
-                    .reduce((sum, w) => sum + w.eth_value, 0);
-                const ethTotal = data.withdrawals
-                    .filter(w => w.withdrawal_type === 'unstETH' && w.claimed_eth !== null)
-                    .reduce((sum, w) => sum + w.claimed_eth, 0);
-                let totalStr = '';
-                if (stethTotal > 0) totalStr += stethTotal.toFixed(4) + ' stETH';
-                if (ethTotal > 0) totalStr += (totalStr ? ' + ' : '') + ethTotal.toFixed(4) + ' ETH';
-                if (!totalStr) totalStr = '0';
-
-                withdrawalTbody.innerHTML += `<tr class="border-t-2 border-gray-600 font-bold">
-                    <td class="py-2" colspan="3">Total Claimed</td>
-                    <td class="py-2 text-right text-yellow-400" colspan="2">${totalStr}</td>
-                </tr>`;
+                renderWithdrawals(data.withdrawals);
+                renderDataWarnings(data.data_warnings);
 
                 withdrawalTable.classList.remove('hidden');
                 withdrawalsLoaded = true;
@@ -1539,6 +1589,7 @@ def create_app() -> FastAPI:
             document.getElementById('address').value = operatorId;
             resetUI();
             displayOperatorData(opData);
+            renderDataWarnings(opData.data_warnings);
 
             // Update save button state
             currentOperatorSaved = true;

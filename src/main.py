@@ -24,23 +24,29 @@ app.add_typer(cli_app, name="")
 
 @app.command()
 def serve(
-    host: str = typer.Option("127.0.0.1", help="Host to bind to"),
-    port: int = typer.Option(8080, help="Port to bind to"),
+    host: str | None = typer.Option(
+        None, help="Host to bind to (env: HOST, default: 127.0.0.1)"
+    ),
+    port: int | None = typer.Option(
+        None, help="Port to bind to (env: PORT, default: 8080)"
+    ),
     reload: bool = typer.Option(False, "--reload", help="Enable auto-reload for development"),
 ):
     """Start the web dashboard server."""
     import uvicorn
 
+    from .core.config import resolve_bind
     from .web.app import create_app
 
     logger = logging.getLogger(__name__)
-    logger.info(f"Starting CSM Dashboard server on {host}:{port}")
+    effective_host, effective_port = resolve_bind(host, port)
+    logger.info(f"Starting CSM Dashboard server on {effective_host}:{effective_port}")
 
     web_app = create_app()
     uvicorn.run(
         web_app if not reload else "src.web.app:create_app",
-        host=host,
-        port=port,
+        host=effective_host,
+        port=effective_port,
         reload=reload,
         factory=reload,
         log_level="info",

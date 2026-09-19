@@ -9,17 +9,27 @@ import json
 import logging
 from pathlib import Path
 
+from ..core.config import get_settings
+
 logger = logging.getLogger(__name__)
 
-CACHE_PATH = Path.home() / ".cache" / "csm-dashboard" / "discovered_cids.json"
+
+def _cache_path() -> Path:
+    """Resolve the cache file location from settings.
+
+    Read per call rather than bound at import time so CACHE_DIR is honoured
+    (and so tests can point it somewhere temporary).
+    """
+    return get_settings().discovered_cids_path
 
 
 def load_discovered_cids() -> list[dict]:
     """Load previously discovered CIDs from disk."""
-    if not CACHE_PATH.exists():
+    cache_path = _cache_path()
+    if not cache_path.exists():
         return []
     try:
-        data = json.loads(CACHE_PATH.read_text())
+        data = json.loads(cache_path.read_text())
         if isinstance(data, list):
             return data
     except (json.JSONDecodeError, OSError) as e:
@@ -29,9 +39,10 @@ def load_discovered_cids() -> list[dict]:
 
 def save_discovered_cids(cids: list[dict]) -> None:
     """Save discovered CIDs to disk."""
+    cache_path = _cache_path()
     try:
-        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CACHE_PATH.write_text(json.dumps(cids, indent=2))
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(cids, indent=2))
     except OSError as e:
         logger.warning(f"Failed to save discovered CIDs cache: {e}")
 

@@ -23,6 +23,11 @@ from .cache import _MISSING, SimpleCache, cached, get_cache
 from .discovered_cids import load_discovered_cids, merge_cid_sources, record_new_cids
 from .etherscan import EtherscanProvider
 from .known_cids import KNOWN_DISTRIBUTION_LOGS
+from .rpc_endpoints import (
+    invalidate_rpc_selection,
+    parse_rpc_candidates,
+    select_rpc_url,
+)
 
 # Manual cache for distribution log history (adaptive TTL)
 _distribution_cache = SimpleCache()
@@ -65,7 +70,12 @@ class OnChainDataProvider:
     def __init__(self, rpc_url: str | None = None):
         self.settings = get_settings()
         self._data_warnings: list[str] = []
-        effective_rpc_url = rpc_url or self.settings.eth_rpc_url
+        # ETH_RPC_URL may list several endpoints; pick the first that answers.
+        # A single configured endpoint short-circuits without a probe, so the
+        # common case costs nothing extra.
+        effective_rpc_url = rpc_url or select_rpc_url(
+            parse_rpc_candidates(self.settings.eth_rpc_url)
+        )
         self._rpc_host = safe_rpc_host(effective_rpc_url)
         self.w3 = Web3(
             Web3.HTTPProvider(
@@ -109,9 +119,13 @@ class OnChainDataProvider:
         try:
             return await asyncio.to_thread(fn, *args, **kwargs)
         except RPCUnavailableError:
+            # Drop the memoized endpoint so the next request re-probes and can
+            # fail over, instead of pinning a dead node for the whole TTL.
+            invalidate_rpc_selection()
             raise
         except Exception as e:
             if is_connection_error(e):
+                invalidate_rpc_selection()
                 raise RPCUnavailableError(self._rpc_host) from e
             raise
 

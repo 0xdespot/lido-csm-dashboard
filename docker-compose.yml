@@ -5,8 +5,13 @@ services:
       dockerfile: Dockerfile
     container_name: csm-dashboard
     ports:
-      - "${PORT:-3000}:3000"
+      # Both sides follow PORT so the published port and the port the app
+      # actually binds stay in step.
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
+      # Passed into the container; the app reads it via Settings.port.
+      PORT: ${PORT:-3000}
+
       # Ethereum RPC Configuration
       ETH_RPC_URL: ${ETH_RPC_URL:-https://ethereum-rpc.publicnode.com}
       
@@ -22,7 +27,7 @@ services:
     
     # Health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:${PORT:-3000}/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

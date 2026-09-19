@@ -12,6 +12,7 @@ import httpx
 from web3 import Web3
 
 from ..core.config import get_settings
+from .rpc_endpoints import parse_rpc_candidates, select_rpc_url
 from ..core.rpc_errors import RPCUnavailableError, is_connection_error, safe_rpc_host
 from .cache import cached
 
@@ -74,9 +75,14 @@ class StrikesProvider:
         self.settings = get_settings()
         # Use configurable gateways from settings (comma-separated)
         self.gateways = [g.strip() for g in self.settings.ipfs_gateways.split(",") if g.strip()]
-        self._rpc_host = safe_rpc_host(rpc_url or self.settings.eth_rpc_url)
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url or self.settings.eth_rpc_url))
-        self.cache_dir = cache_dir or Path.home() / ".cache" / "csm-dashboard" / "strikes"
+        # Same multi-endpoint selection as OnChainDataProvider, so a failover
+        # applies here too rather than this provider pinning a dead node.
+        effective_rpc_url = rpc_url or select_rpc_url(
+            parse_rpc_candidates(self.settings.eth_rpc_url)
+        )
+        self._rpc_host = safe_rpc_host(effective_rpc_url)
+        self.w3 = Web3(Web3.HTTPProvider(effective_rpc_url))
+        self.cache_dir = cache_dir or self.settings.strikes_cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._last_request_time = 0.0
         self._rate_limit_lock = asyncio.Lock()

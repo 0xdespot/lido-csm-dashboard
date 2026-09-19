@@ -36,16 +36,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/venv /opt/venv
 
 # Set environment variables
+# HOST/PORT are defaults, not hardcodes: `docker run -e PORT=4000`, a compose
+# `environment:` entry, or an Unraid variable all override them. The app falls
+# back to these when nothing is supplied.
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOST=0.0.0.0 \
+    PORT=3000 \
+    CACHE_DIR=/root/.cache/csm-dashboard
 
-# Health check
+# Health check (shell form so $PORT is expanded at runtime)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3000/api/health || exit 1
+    CMD curl -f http://localhost:$PORT/api/health || exit 1
 
-# Expose port for web dashboard
+# Expose the default port. EXPOSE is metadata only and cannot be dynamic — it
+# documents the default and does not restrict what the app actually binds.
 EXPOSE 3000
 
-# Default command - csm is now an entry point from pip install
-CMD ["csm", "serve", "--host", "0.0.0.0", "--port", "3000"]
+# Default command - csm is now an entry point from pip install.
+# Exec form keeps PID 1 as the Python process so it receives SIGTERM directly;
+# host/port come from the HOST/PORT environment variables set above.
+CMD ["csm", "serve"]

@@ -1,10 +1,11 @@
 """Tests for the config module."""
 
 import os
-import pytest
+from pathlib import Path
+
 from unittest.mock import patch
 
-from src.core.config import Settings, get_settings
+from src.core.config import Settings, get_settings, resolve_bind
 
 
 class TestSettings:
@@ -87,3 +88,109 @@ class TestGetSettings:
 
         # Should be the same instance (cached)
         assert settings1 is settings2
+
+
+class TestServerBindSettings:
+    """Tests for the host/port settings and CLI-over-env precedence."""
+
+    def test_bind_defaults(self):
+        """Bare-metal defaults are unchanged: 127.0.0.1:8080."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HOST", None)
+            os.environ.pop("PORT", None)
+            settings = Settings()
+
+        assert settings.host == "127.0.0.1"
+        assert settings.port == 8080
+
+    def test_port_and_host_env_override(self):
+        """PORT/HOST environment variables override the field defaults."""
+        with patch.dict(os.environ, {"HOST": "0.0.0.0", "PORT": "9001"}):
+            settings = Settings()
+
+        assert settings.host == "0.0.0.0"
+        assert settings.port == 9001
+
+    def test_resolve_bind_falls_back_to_settings(self):
+        """With no CLI flags, the settings values win."""
+        settings = Settings(host="0.0.0.0", port=3000)
+
+        assert resolve_bind(None, None, settings) == ("0.0.0.0", 3000)
+
+    def test_resolve_bind_cli_beats_env(self):
+        """An explicit CLI flag beats the env-backed settings value."""
+        settings = Settings(host="0.0.0.0", port=9001)
+
+        assert resolve_bind("127.0.0.1", 7000, settings) == ("127.0.0.1", 7000)
+
+    def test_resolve_bind_flags_are_independent(self):
+        """Supplying only one flag leaves the other on the settings value."""
+        settings = Settings(host="0.0.0.0", port=9001)
+
+        assert resolve_bind(None, 7000, settings) == ("0.0.0.0", 7000)
+        assert resolve_bind("::1", None, settings) == ("::1", 9001)
+
+    def test_resolve_bind_accepts_port_zero(self):
+        """Port 0 (ephemeral) is a real value, not a missing one."""
+        settings = Settings(port=9001)
+
+        assert resolve_bind(None, 0, settings)[1] == 0
+
+    def test_resolve_bind_uses_get_settings_when_omitted(self):
+        """Omitting the settings argument reads the cached global settings."""
+        get_settings.cache_clear()
+        with patch.dict(os.environ, {"PORT": "9123"}):
+            get_settings.cache_clear()
+            assert resolve_bind(None, None)[1] == 9123
+        get_settings.cache_clear()
+
+
+class TestCacheDirSettings:
+    """All on-disk caches derive from a single configurable root."""
+
+    def test_cache_dir_default(self):
+        """Default root is the historical ~/.cache/csm-dashboard location."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CACHE_DIR", None)
+            os.environ.pop("DATABASE_PATH", None)
+            settings = Settings()
+
+        assert settings.cache_dir == Path.home() / ".cache" / "csm-dashboard"
+
+    def test_all_paths_derive_from_cache_dir(self):
+        """One CACHE_DIR relocates the db, the CID cache and the IPFS cache."""
+        settings = Settings(cache_dir=Path("/mnt/appdata/csm"))
+
+        assert settings.database_path == Path("/mnt/appdata/csm/operators.db")
+        assert settings.discovered_cids_path == Path("/mnt/appdata/csm/discovered_cids.json")
+        assert settings.ipfs_cache_dir == Path("/mnt/appdata/csm/ipfs")
+
+    def test_cache_dir_env_override(self):
+        """CACHE_DIR is settable from the environment."""
+        with patch.dict(os.environ, {"CACHE_DIR": "/mnt/appdata/csm"}):
+            os.environ.pop("DATABASE_PATH", None)
+            settings = Settings()
+
+        assert settings.cache_dir == Path("/mnt/appdata/csm")
+        assert settings.database_path == Path("/mnt/appdata/csm/operators.db")
+
+    def test_explicit_database_path_wins_over_cache_dir(self):
+        """An explicit DATABASE_PATH is not clobbered by the derivation."""
+        settings = Settings(
+            cache_dir=Path("/mnt/appdata/csm"),
+            database_path=Path("/elsewhere/custom.db"),
+        )
+
+        assert settings.database_path == Path("/elsewhere/custom.db")
+        # The other caches still follow cache_dir.
+        assert settings.ipfs_cache_dir == Path("/mnt/appdata/csm/ipfs")
+
+    def test_explicit_database_path_env_wins(self):
+        """Same precedence when both arrive as environment variables."""
+        with patch.dict(
+            os.environ,
+            {"CACHE_DIR": "/mnt/appdata/csm", "DATABASE_PATH": "/elsewhere/custom.db"},
+        ):
+            settings = Settings()
+
+        assert settings.database_path == Path("/elsewhere/custom.db")
