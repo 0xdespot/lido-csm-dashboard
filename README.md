@@ -64,11 +64,43 @@ cp .env.example .env
 ```
 
 Available settings:
-- `ETH_RPC_URL`: Ethereum RPC endpoint (default: https://eth.llamarpc.com)
+- `ETH_RPC_URL`: Ethereum RPC endpoint, or a comma-separated list (default: https://eth.llamarpc.com)
 - `BEACON_API_URL`: Beacon chain API (default: https://beaconcha.in/api/v1)
 - `BEACON_API_KEY`: Optional API key for beaconcha.in (higher rate limits)
 - `ETHERSCAN_API_KEY`: Optional API key for Etherscan (recommended for accurate historical data)
 - `CACHE_TTL_SECONDS`: Cache duration in seconds (default: 300)
+- `CACHE_DIR`: Root for the operator database, CID cache and IPFS cache (default: `~/.cache/csm-dashboard`)
+- `DATABASE_PATH`: Overrides just the database location, independently of `CACHE_DIR`
+- `HOST` / `PORT`: Web server bind address (defaults: `127.0.0.1`, `8080`; the Docker image uses `0.0.0.0` and `3000`)
+
+Every setting follows the same precedence: **environment variable > `.env` > built-in default**.
+
+### Choosing an RPC endpoint
+
+`ETH_RPC_URL` accepts an ordered, comma-separated list. Each endpoint is tried
+until one responds; the winner is remembered for 5 minutes and re-probed as
+soon as a call fails, so a node whose address changes does not take the
+dashboard with it:
+
+```bash
+ETH_RPC_URL="http://192.168.1.50:8545,https://ethereum-rpc.publicnode.com"
+```
+
+**Distribution History needs your own node.** It performs roughly 120
+sequential 50k-block `eth_getLogs` scans plus 8 parallel bond-event scans.
+Public endpoints rate-limit or time out on that, and the History panel will
+show the resulting RPC error. The lighter pages work fine against a public
+endpoint, which makes a sensible last entry in the list.
+
+If you run a node at home, give it a DHCP reservation on your router. That
+fixes a moving IP at the source; the fallback list is a safety net, not a cure.
+
+### Persisting the cache in containers
+
+The saved-operator database, the discovered distribution-CID cache and the IPFS
+log cache all live under `CACHE_DIR`. Mount it, or every container restart
+re-runs full CID discovery and re-fetches every IPFS log. The bundled
+`docker-compose.yml` and Unraid template already map it.
 
 ## Usage
 
@@ -183,18 +215,26 @@ csm serve [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--host` | Host to bind to (default: 127.0.0.1) |
-| `--port` | Port to bind to (default: 8080) |
+| `--host` | Host to bind to (env: `HOST`, default: 127.0.0.1) |
+| `--port` | Port to bind to (env: `PORT`, default: 8080) |
 | `--reload` | Enable auto-reload for development |
+
+Host and port resolve with the precedence **CLI flag > environment variable > `.env` > default**, the same as every other setting.
 
 **Examples:**
 
 ```bash
-# Start on default port
+# Start on default port (8080)
 csm serve
 
-# Start on custom port
+# Start on a custom port
 csm serve --port 3000
+
+# Same thing via the environment
+PORT=3000 csm serve
+
+# The flag wins over the environment (starts on 7000)
+PORT=3000 csm serve --port 7000
 
 # Development mode with auto-reload
 csm serve --reload
@@ -203,6 +243,18 @@ csm serve --reload
 Then open http://localhost:8080 in your browser.
 
 **Docker:** The web dashboard is already running when you use `docker compose up`. Access it at http://localhost:3000
+
+The image defaults to `HOST=0.0.0.0` and `PORT=3000`, both overridable:
+
+```bash
+# Publish and listen on 4000 instead
+docker run -e PORT=4000 -p 4000:4000 lido-csm-dashboard
+
+# With compose, PORT moves both sides of the mapping together
+PORT=4000 docker compose up -d
+```
+
+On Unraid, change the host port with the template's **Web UI Port** control; the container listens on 3000. If you add a `PORT` variable to change what the container binds, update that control's container target to match or the container becomes unreachable.
 
 ## JSON Output
 
