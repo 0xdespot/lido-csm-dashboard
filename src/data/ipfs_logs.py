@@ -41,6 +41,62 @@ class FrameData:
     validator_count: int  # Number of validators for operator in this frame
 
 
+def _is_valid_frame(frame_obj: object) -> bool:
+    """Shape check for a single frame object.
+
+    Only the fields the parser actually relies on are checked; unknown extra
+    keys are fine, since the log format has gained fields over time.
+    """
+    if not isinstance(frame_obj, dict):
+        return False
+
+    frame = frame_obj.get("frame")
+    if not isinstance(frame, list) or len(frame) < 2:
+        return False
+    # bool is an int subclass but is never a valid epoch.
+    if not all(isinstance(e, int) and not isinstance(e, bool) for e in frame[:2]):
+        return False
+
+    return isinstance(frame_obj.get("operators"), dict)
+
+
+def normalize_log_frames(data: object) -> list[dict]:
+    """Return the frame objects in a distribution log, whatever its format.
+
+    Two formats are in circulation:
+
+    * legacy — the frame object sits at the top level, one frame per CID;
+    * versioned — ``{"_ver": 1, "frames": [<frame>, ...]}``, adopted mid-2026,
+      where the inner frame keeps the legacy schema.
+
+    Returns ``[]`` for anything unrecognised. Every frame in the list is
+    returned, since the versioned format permits more than one per CID and
+    dropping the extras would silently lose distributions.
+    """
+    if not isinstance(data, dict):
+        return []
+
+    if isinstance(data.get("frames"), list):
+        return [f for f in data["frames"] if isinstance(f, dict)]
+
+    if "frame" in data:
+        return [data]
+
+    return []
+
+
+def is_valid_log_payload(data: object) -> bool:
+    """Minimal shape check for a distribution log fetched from IPFS.
+
+    Guards against a gateway returning a truncated, wrapped, or error payload.
+    Such a payload makes ``get_frame_info`` fall back to ``(0, 0)``, which in
+    turn produced a zero-length frame downstream — so rejecting it here keeps a
+    single bad response from being cached to disk and becoming sticky.
+    """
+    frames = normalize_log_frames(data)
+    return bool(frames) and all(_is_valid_frame(f) for f in frames)
+
+
 class IPFSLogProvider:
     """Fetches and caches historical distribution logs from IPFS."""
 
@@ -51,7 +107,7 @@ class IPFSLogProvider:
         self.settings = get_settings()
         # Use configurable gateways from settings (comma-separated)
         self.gateways = [g.strip() for g in self.settings.ipfs_gateways.split(",") if g.strip()]
-        self.cache_dir = cache_dir or Path.home() / ".cache" / "csm-dashboard" / "ipfs"
+        self.cache_dir = cache_dir or self.settings.ipfs_cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._last_request_time = 0.0
         self._rate_limit_lock = asyncio.Lock()
@@ -66,14 +122,25 @@ class IPFSLogProvider:
         if cache_path.exists():
             try:
                 with open(cache_path) as f:
-                    return json.load(f)
+                    data = json.load(f)
             except (json.JSONDecodeError, OSError):
                 # Corrupted cache, remove it
                 cache_path.unlink(missing_ok=True)
+                return None
+            if not is_valid_log_payload(data):
+                # Written before this validation existed, or by a bad gateway.
+                # Drop it so the next fetch can replace it.
+                logger.warning(f"Discarding malformed cached IPFS log for CID {cid}")
+                cache_path.unlink(missing_ok=True)
+                return None
+            return data
         return None
 
     def _save_to_cache(self, cid: str, data: dict) -> None:
         """Save log data to local cache."""
+        if not is_valid_log_payload(data):
+            logger.warning(f"Refusing to cache malformed IPFS log for CID {cid}")
+            return
         cache_path = self._get_cache_path(cid)
         try:
             with open(cache_path, "w") as f:
@@ -117,6 +184,13 @@ class IPFSLogProvider:
                 try:
                     url = f"{gateway}{cid}"
                     response = await client.get(url)
+                    if response.status_code != 200:
+                        # Previously skipped in silence, so a fleet-wide 429
+                        # looked identical to a missing CID.
+                        logger.warning(
+                            f"IPFS gateway {gateway} returned HTTP "
+                            f"{response.status_code} for CID {cid}"
+                        )
                     if response.status_code == 200:
                         try:
                             data = response.json()
@@ -126,6 +200,14 @@ class IPFSLogProvider:
                         # The IPFS log is wrapped in a list, unwrap it
                         if isinstance(data, list) and len(data) == 1:
                             data = data[0]
+                        if not is_valid_log_payload(data):
+                            # Truncated or error payload — try the next gateway
+                            # rather than accepting and caching it.
+                            logger.warning(
+                                f"Malformed IPFS log from {gateway} for CID {cid}; "
+                                "trying next gateway"
+                            )
+                            continue
                         # Cache the successful result
                         self._save_to_cache(cid, data)
                         return data
@@ -156,7 +238,19 @@ class IPFSLogProvider:
         rewards = op_data.get("distributed_rewards")
         if rewards is None:
             rewards = op_data.get("distributed")  # Fallback to old field name
-        return rewards if rewards is not None else 0
+        if rewards is None:
+            return 0
+        # The versioned log format quotes these wei amounts as strings, while
+        # the legacy format used ints. Coerce, or the value flows into
+        # `sum(...)` downstream and raises a TypeError that the caller's broad
+        # `except Exception` turns into a silently empty history.
+        try:
+            return int(rewards)
+        except (TypeError, ValueError):
+            logger.warning(
+                f"Unparseable distributed_rewards for operator {operator_id}: {rewards!r}"
+            )
+            return 0
 
     def get_frame_info(self, log_data: dict) -> tuple[int, int]:
         """
@@ -212,24 +306,27 @@ class IPFSLogProvider:
                 failed_count += 1
                 continue
 
-            rewards = self.get_operator_frame_rewards(log_data, operator_id)
-            if rewards is None:
-                # Operator not in this frame (may have joined later)
-                continue
+            # A versioned log can bundle several frames under one CID; the
+            # legacy format normalizes to a single-element list.
+            for frame_obj in normalize_log_frames(log_data):
+                rewards = self.get_operator_frame_rewards(frame_obj, operator_id)
+                if rewards is None:
+                    # Operator not in this frame (may have joined later)
+                    continue
 
-            start_epoch, end_epoch = self.get_frame_info(log_data)
-            validator_count = self.get_operator_validator_count(log_data, operator_id)
+                start_epoch, end_epoch = self.get_frame_info(frame_obj)
+                validator_count = self.get_operator_validator_count(frame_obj, operator_id)
 
-            frames.append(
-                FrameData(
-                    start_epoch=start_epoch,
-                    end_epoch=end_epoch,
-                    log_cid=cid,
-                    block_number=block,
-                    distributed_rewards=rewards,
-                    validator_count=validator_count,
+                frames.append(
+                    FrameData(
+                        start_epoch=start_epoch,
+                        end_epoch=end_epoch,
+                        log_cid=cid,
+                        block_number=block,
+                        distributed_rewards=rewards,
+                        validator_count=validator_count,
+                    )
                 )
-            )
 
         if failed_count > 0:
             logger.warning(

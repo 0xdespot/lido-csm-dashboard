@@ -6,6 +6,36 @@ from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
+
+def estimate_next_distribution_date(
+    start_epoch: int, end_epoch: int, now: datetime
+) -> str | None:
+    """Project the next distribution date forward from the latest frame.
+
+    Steps one frame length at a time until the result is in the future, so
+    IPFS logs lagging months behind still yield a forward-looking date.
+
+    Returns ``None`` for a non-positive frame length rather than looping.
+    ``IPFSLogProvider.get_frame_info`` falls back to ``(0, 0)`` whenever a log
+    lacks or malforms its ``frame`` key, which makes the step size zero; the
+    loop then never terminates and pins a worker thread at 100% CPU, with no
+    request timeout anywhere to break it.
+    """
+    frame_epoch_duration = end_epoch - start_epoch
+    if frame_epoch_duration <= 0:
+        logger.warning(
+            f"Malformed frame range ({start_epoch}, {end_epoch}); "
+            "skipping next-distribution estimate"
+        )
+        return None
+
+    next_epoch = end_epoch + frame_epoch_duration
+    next_dt = epoch_to_dt(next_epoch)
+    while next_dt < now:
+        next_epoch += frame_epoch_duration
+        next_dt = epoch_to_dt(next_epoch)
+    return next_dt.isoformat()
+
 from ..core.types import (
     APYMetrics,
     BondSummary,
@@ -304,15 +334,15 @@ class OperatorService:
                         # historical_reward_apy_ltd remains None
 
                         # Estimate next distribution date using actual frame epoch span
-                        # If IPFS logs are behind, keep advancing until we get a future date
                         now = datetime.now(timezone.utc)
-                        frame_epoch_duration = current_frame.end_epoch - current_frame.start_epoch
-                        next_epoch = current_frame.end_epoch + frame_epoch_duration
-                        next_dt = epoch_to_dt(next_epoch)
-                        while next_dt < now:
-                            next_epoch += frame_epoch_duration
-                            next_dt = epoch_to_dt(next_epoch)
-                        next_distribution_date = next_dt.isoformat()
+                        next_distribution_date = estimate_next_distribution_date(
+                            current_frame.start_epoch, current_frame.end_epoch, now
+                        )
+                        if next_distribution_date is None:
+                            self.onchain._data_warnings.append(
+                                "Distribution log has a malformed frame range; "
+                                "the next distribution date could not be estimated."
+                            )
 
                         # Estimate next distribution ETH based on current daily rate
                         if current_days > 0:
